@@ -1,0 +1,1 @@
+python3 my_runner.py --num_iters 1 --checkpoint_freq 1 --RLLIB_NUM_GPUS 1 --num_workers 10 --local_mode_flag 0 --learner_name trainer --agent_first_name ppo --agent_last_name _Rainbow --load_agent_flag 0 --save_agent_flag 1 --num_policies 1

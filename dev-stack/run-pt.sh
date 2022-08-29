@@ -1,0 +1,1 @@
+docker run --gpus='"device=0"' -d -it -p 9999:9999 -v /home/ETHZ/dbt_python/housing_design:/app/main --name="dbt_housing" dbt_housing bash
