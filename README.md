@@ -23,7 +23,7 @@ Like other Gym custom environment, the RLDesigner environment can be easily inst
 ## Note:
 This repository is only the public version of underdeveloping RLDesigner environment which is currently a private repository but will be public in the near future. As soon as we make it public, the new link will be shared here! In case you need access to the latest version, please feel free to contact the first author. 
 
-## Citing RlDesigner
+## Citing RLDesigner
 
 ```bibtex
 @article{kakooee2022rldesigner,
