@@ -12,15 +12,10 @@ import numpy as np
 
 # %%
 
-class SequentialDrawing:
+class SequentialPainter:
     def __init__(self, fenv_config:dict=None):
         self.fenv_config = fenv_config
         
-        
-    @staticmethod
-    def _cartesian2image_coord(x, y, max_y):
-        return max_y-y, x
-
 
     def updata_obs_mat(self, plan_data_dict:dict=None, active_wall_name:str=None):
         outline_segments = copy.deepcopy(plan_data_dict['outline_segments'])
@@ -30,6 +25,7 @@ class SequentialDrawing:
             
         wall_coords = copy.deepcopy(plan_data_dict[wall_coords_type_name])
         
+        obs_blocked_cells = copy.deepcopy(plan_data_dict['obs_blocked_cells'])
         obs_mat = copy.deepcopy(plan_data_dict['obs_mat'])
         # obs_mat_mask = copy.deepcopy(plan_data_dict['obs_mat_mask'])
         obs_mat_w = copy.deepcopy(plan_data_dict['obs_mat_w'])
@@ -47,7 +43,7 @@ class SequentialDrawing:
             
             obs_mat[r, c] = self.fenv_config['wall_pixel_value']
             obs_mat_w[r, c] = -wall_i 
-            obs_mat_for_dot_prod[r, c] = 0
+            obs_mat_for_dot_prod[r, c] = 0  
             
             base_obs_mat[r, c] = self.fenv_config['wall_pixel_value']
             base_obs_mat_w[r, c] = -wall_i 
@@ -71,6 +67,7 @@ class SequentialDrawing:
             x = radiation_coord[0]
             y = radiation_coord[1]
             
+            delta_x_or_y = 1 if self.fenv_config['so_thick_flag'] else 0
             r, c = self._cartesian2image_coord(x, y, self.fenv_config['max_y'])
             if plan_data_dict['moving_ones'][r, c] == 0:
             
@@ -86,6 +83,7 @@ class SequentialDrawing:
                                     obs_mat_w[r, c] = -wall_i 
                                     obs_mat_for_dot_prod[r, c] = 0
                                 else:
+                                    x -= delta_x_or_y
                                     break
                             else:
                                 x = self.fenv_config['max_x']
@@ -103,6 +101,7 @@ class SequentialDrawing:
                                     obs_mat_w[r, c] = -wall_i 
                                     obs_mat_for_dot_prod[r, c] = 0
                                 else:
+                                    x += delta_x_or_y
                                     break
                             else:
                                 x = 0
@@ -120,6 +119,7 @@ class SequentialDrawing:
                                     obs_mat_w[r, c] = -wall_i 
                                     obs_mat_for_dot_prod[r, c] = 0
                                 else:
+                                    y += delta_x_or_y
                                     break
                             else:
                                 y = 0
@@ -137,6 +137,7 @@ class SequentialDrawing:
                                     obs_mat_w[r, c] = -wall_i 
                                     obs_mat_for_dot_prod[r, c] = 0
                                 else:
+                                    y -= delta_x_or_y
                                     break
                             else:
                                 y = self.fenv_config['max_y']
@@ -180,3 +181,8 @@ class SequentialDrawing:
         for p in points:
             if p%2 != 0:
                 print(p)
+                
+                
+    @staticmethod
+    def _cartesian2image_coord(x, y, max_y):
+        return int(max_y-y), int(x)

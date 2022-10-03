@@ -26,7 +26,9 @@ from ray.tune.suggest.bayesopt import BayesOptSearch
 # from hebo.optimizers.hebo import HEBO
 # from ray.tune.suggest.hebo import HEBOSearch
 
-import my_learner_config
+import learner_config
+
+import store_info_as_json
 
 # %%
 class MyTrainer:
@@ -113,10 +115,10 @@ class MyTrainer:
         return episode_df
         
     def _get_trainer_config(self, config):
-        config = my_learner_config.get_learner_config(self.env, 
-                                                     self.env_name, 
-                                                     self.agent_config, 
-                                                     config)
+        config = learner_config.get_learner_config(self.env, 
+                                                   self.env_name, 
+                                                   self.agent_config, 
+                                                   config)
         return config
     
     
@@ -165,71 +167,12 @@ class MyTrainer:
         with open(agent_config_path, "wb") as f:
             np.save(f, self.agent_config)
 
-        if self.env.fenv_config['load_fixed_walls_sets_flag']:
-            src_wall_data_path = os.path.join(Path(self.agent_config['storage']), 'walls_data', 'fixed_walls.p')
-            des_wall_data_dir = os.path.join(self.agent_config['trainer_chkpt_dir'], "walls_data")
-            if not os.path.exists(des_wall_data_dir):
-                os.makedirs(des_wall_data_dir)
-            des_wall_data_path = os.path.join(des_wall_data_dir, 'fixed_walls.p')
-            shutil.copyfile(src_wall_data_path, des_wall_data_path)
-            
         ## save info as a json file
-        info_json = {
-                'env_name': self.env.fenv_config['env_name'],
-                'env_planning': self.env.fenv_config['env_planning'],
-                'env_type': self.env.fenv_config['env_type'],
-                'env_space': self.env.fenv_config['env_space'],
-                'plan_config_source_name': self.env.fenv_config['plan_config_source_name'],
-                
-                'min_x': self.env.fenv_config['min_x'],
-                'max_x': self.env.fenv_config['max_x'],
-                'min_y': self.env.fenv_config['min_y'],
-                'max_y': self.env.fenv_config['max_y'],
-                'n_channels': self.env.fenv_config['n_channels'],
-                'n_actions': self.env.fenv_config['n_actions'],
-                'fc_obs_shape': np.array(self.env.obs.shape_fc).tolist(),
-                'cnn_obs_shape': self.env.obs.shape_cnn,
-                
-                'scenario_name': self.env.fenv_config['scenario_name'],
-                
-                'net_arch': self.env.fenv_config['net_arch'],
-                'custom_model_flag': self.env.fenv_config['custom_model_flag'],
-                
-                'mask_flag': self.env.fenv_config['mask_flag'],
-                'mask_numbers': self.env.fenv_config['mask_numbers'],
-                'fixed_fc_observation_space': self.env.fenv_config['fixed_fc_observation_space'],
-                
-                'is_area_considered': self.env.fenv_config['is_area_considered'],
-                'is_proportion_considered': self.env.fenv_config['is_proportion_considered'],
-                
-                
-                'stop_time_step': self.env.fenv_config['stop_time_step'], 
-                
-                'include_wall_in_area_flag': self.env.fenv_config['include_wall_in_area_flag'],
-                # 'areas_config': self.env.obs.plan_data_dict['desired_areas'],
-                'area_tolerance': self.env.fenv_config['area_tolerance'],
-                'n_walls': self.env.fenv_config['n_walls'],
-                'use_areas_info_into_observation_flag': self.env.fenv_config['use_areas_info_into_observation_flag'],
-                
-                'rewarding_method_name': self.env.fenv_config['rewarding_method_name'],
-                'positive_done_reward': self.env.fenv_config['positive_done_reward'],
-                'negative_action_reward': self.env.fenv_config['negative_action_reward'],
-                'negative_wrong_area_reward': self.env.fenv_config['negative_wrong_area_reward'],
-                'negative_rejected_by_room_reward': self.env.fenv_config['negative_rejected_by_room_reward'], 
-                'negative_rejected_by_canvas_reward': self.env.fenv_config['negative_rejected_by_canvas_reward'], 
-                
-                'reward_shaping_flag': self.env.fenv_config['reward_shaping_flag'],
-                'reward_decremental_flag': self.env.fenv_config['reward_decremental_flag'],
-                'reward_increment_within_interval_flag': self.env.fenv_config['reward_increment_within_interval_flag'],
-                
-                'learner_name': self.agent_config['learner_name'],
-                'agent_first_name': self.agent_config['agent_first_name'],
-                'agent_last_name': self.agent_config['agent_last_name'],
-                'some_agents': self.agent_config['some_agents'],
-                'num_policies': self.agent_config['num_policies'],
-                'hyper_tune_flag': self.agent_config['hyper_tune_flag'],
-                }
+        store_info_as_json.store(fenv_config=self.env.fenv_config,
+                                 shape_fc=self.env.obs.state_data_dict['shape_fc'],
+                                 shape_cnn=self.env.obs.state_data_dict['shape_cnn'],
+                                 agent_config=self.agent_config,
+                                 plan_data_dict=self.env.obs.plan_data_dict,
+                                 chkpt_path=self.chkpt_path,
+                                 store_dir=self.agent_config['trainer_chkpt_dir'])
             
-        info_json_path = os.path.join(self.agent_config['trainer_chkpt_dir'], "info_json.json")
-        with open(info_json_path, 'w') as f:
-            json.dump(info_json, f, indent=4)

@@ -8,718 +8,703 @@ Created on Sun Aug  8 23:34:14 2021
 
 import gym
 import copy
-import itertools
+# import ast
+# import itertools
 import numpy as np
-import pandas as pd
-from collections import deque
-from webcolors import name_to_rgb
+# import pandas as pd
+from collections import deque, defaultdict
+# from webcolors import name_to_rgb
 
 from gym_floorplan.base_env.observation.base_observation import BaseObservation
 
 from gym_floorplan.envs.observation.wall_generator import WallGenerator
-from gym_floorplan.envs.observation.geometry import Outline, Plan
-from gym_floorplan.envs.observation.sequential_drawing import SequentialDrawing
-from gym_floorplan.envs.observation.wall_transform import WallTransform
+# from gym_floorplan.envs.observation.geometry import Outline, Plan
+from gym_floorplan.envs.observation.sequential_painter import SequentialPainter
 from gym_floorplan.envs.observation.room_extractor import RoomExtractor
+from gym_floorplan.envs.observation.plan_construcror import PlanConstructor
+from gym_floorplan.envs.observation.state_composer import StateComposer
+from gym_floorplan.envs.observation.action_parser import ActionParser
+from gym_floorplan.envs.layout_graph import LayoutGraph
 
 
 #%%
-class Observation(BaseObservation):
+class Observation:
     def __init__(self, fenv_config:dict={}):
-        super().__init__()
+        # super().__init__()
         self.fenv_config = fenv_config
-        self.painter = SequentialDrawing(fenv_config=fenv_config)
+        self.painter = SequentialPainter(fenv_config=self.fenv_config)
         self.rextractor = RoomExtractor(fenv_config=self.fenv_config)
+        self.plan_construcror = PlanConstructor(fenv_config=self.fenv_config)
+        self.state_composer = StateComposer(fenv_config=self.fenv_config)
+        self.action_parser = ActionParser(fenv_config=self.fenv_config)
+        
+        self.observation_space = self._get_observation_space()
 
-    @property
-    def observation_space(self): 
-        self._creat_observation_space_variables()
+
+    # @property
+    def _get_observation_space(self): # def observation_space(self): 
+        self.state_data_dict = self.state_composer.creat_observation_space_variables()
         
-        _observation_space_cnn = gym.spaces.Box(low=self.low_cnn, 
-                                                high=self.high_cnn,
-                                                shape=self.shape_cnn,
+        _observation_space_cnn = gym.spaces.Box(low=self.state_data_dict['low_cnn'], 
+                                                high=self.state_data_dict['high_cnn'],
+                                                shape=self.state_data_dict['shape_cnn'],
                                                 dtype=np.uint8)
-        _observation_space_fc = gym.spaces.Box(low=self.low_fc,
-                                               high=self.high_fc, 
-                                               shape=self.shape_fc, #(self.shape_fc,), #
-                                               dtype=np.float)    
+        _observation_space_fc = gym.spaces.Box(low=self.state_data_dict['low_fc'],
+                                               high=self.state_data_dict['high_fc'], 
+                                               shape=self.state_data_dict['shape_fc'], #(self.state_data_dict['shape_fc'],), #
+                                               dtype=float)
         
-        if self.fenv_config['net_arch'] == 'cnn': 
+        _observation_space_gcn = gym.spaces.Box(low=self.state_data_dict['low_gcn'],
+                                               high=self.state_data_dict['high_gcn'], 
+                                               shape=self.state_data_dict['shape_gcn'], 
+                                               dtype=float)
+        
+        if self.fenv_config['action_masking_flag']:
+            _observation_space_fc = gym.spaces.Dict({
+                                'action_mask': gym.spaces.Box(low=0,
+                                                              high=1, 
+                                                              shape=(self.fenv_config['n_actions'],), 
+                                                              dtype=float),
+                                'action_avail': gym.spaces.Box(low=0,
+                                                               high=1, 
+                                                               shape=(self.fenv_config['n_actions'],), 
+                                                               dtype=float),
+                                'real_obs': _observation_space_fc,
+                                })
+        
+        
+            _observation_space_gcn = gym.spaces.Dict({
+                                'action_mask': gym.spaces.Box(low=0,
+                                                              high=1, 
+                                                              shape=(self.fenv_config['n_actions'],), 
+                                                              dtype=float),
+                                'action_avail': gym.spaces.Box(low=0,
+                                                               high=1, 
+                                                               shape=(self.fenv_config['n_actions'],), 
+                                                               dtype=float),
+                                'real_obs': _observation_space_gcn,
+                                })
+        
+        
+        
+        if self.fenv_config['net_arch'] == 'Cnn': 
             self._observation_space = _observation_space_cnn
             
-        elif self.fenv_config['net_arch'] == 'fc':
+        elif self.fenv_config['net_arch'] == 'Fc':
             self._observation_space = _observation_space_fc
             
-        elif self.fenv_config['net_arch'] == 'cnnfc':
-            self._observation_space = gym.spaces.Tuple((_observation_space_cnn,
-                                                        _observation_space_fc))
+        # elif self.fenv_config['net_arch'] == 'CnnFc':
+        #     self._observation_space = gym.spaces.Tuple((_observation_space_cnn,
+        #                                                 _observation_space_fc))
 
-        elif self.fenv_config['net_arch'] == 'fccnn':
+        elif self.fenv_config['net_arch'] == 'FcCnn':
             self._observation_space = gym.spaces.Tuple((_observation_space_fc,
                                                         _observation_space_cnn))
+
+        elif self.fenv_config['net_arch'] == 'CnnGcn':
+            if self.fenv_config['gcn_obs_method'] == 'embedded_image_graph':
+                self._observation_space = _observation_space_gcn
+            elif self.fenv_config['gcn_obs_method'] == 'image':
+                self._observation_space = _observation_space_cnn
+            elif self.fenv_config['gcn_obs_method'] == 'dummy_vector':
+                self._observation_space = _observation_space_gcn
+            else:
+                raise ValueError('Invalid gcn_obs_method!')
+                
+        elif self.fenv_config['net_arch'] == 'MetaFc':
+            self._observation_space = _observation_space_fc
+            
+        else:
+            raise ValueError(f"{self.fenv_config['net_arch']} net_arch does not exist")
+            
         return self._observation_space
     
     
-    def _creat_observation_space_variables(self):
-        if self.fenv_config['fixed_fc_observation_space']:
-            n_walls = self.fenv_config['num_of_fixed_walls_for_masked']
-        else:
-            n_walls = self.fenv_config['n_walls']
-            
-        if self.fenv_config['use_areas_info_into_observation_flag']:
-            if n_walls > 1:
-                self.len_state_vec = np.cumsum([i * 5 * 5 for i in range(1, n_walls)])[-1]  # 5=n_wall_points
-            else:
-                self.len_state_vec = 0
-            self.len_state_vec += n_walls * 5 * 2  # 5=n_wall_points, 2=xy
-            self.len_state_vec += n_walls * 5 * 4  # 4=n_corners
-            self.len_state_vec += (n_walls + 1) * 3  # 3=desired_areas, delta_areas, acheived_areas
-            # TOTO: I might need to adjust the following line w.r.t masked_areas
-            lowest_obs_val_fc = -self.fenv_config['total_area'] #max(list(self.fenv_config['areas_config'].values()))
-            highest_obs_val_fc = self.fenv_config['total_area'] #self.fenv_config['n_rows '] * self.fenv_config['n_cols']
-            
-        else:
-            self.len_state_vec = n_walls * 5 * 2 # x y coordinates of the walls for 5 important points
-            self.len_state_vec += n_walls * 5 * 4  # distance between each of 5 wall's important poitns and 4 corners
-            if n_walls > 1:
-                self.len_state_vec += np.cumsum([i * 5 * 5 for i in range(1, n_walls)])[-1] # distane between 5 important points of walls
-            else:
-                self.len_state_vec = 0
-            lowest_obs_val_fc = self.fenv_config['min_x']
-            highest_obs_val_fc = 30
-
-        if (self.fenv_config['env_planning'] == 'One_Shot') and (self.fenv_config['net_arch'] in ['fc', 'cnnfc', 'fccnn']):
-            if self.fenv_config['use_areas_info_into_observation_flag']:
-                lowest_obs_val_fc = -self.fenv_config['n_rows'] * self.fenv_config['n_cols']
-                highest_obs_val_fc = self.fenv_config['n_rows'] * self.fenv_config['n_cols']
-            else:
-                lowest_obs_val_fc = -1
-                highest_obs_val_fc = 40
-
-        self.low_fc = lowest_obs_val_fc * np.ones(self.len_state_vec, dtype=float)
-        self.high_fc = highest_obs_val_fc * np.ones(self.len_state_vec, dtype=float)
-        self.shape_fc = (self.len_state_vec,)
-        
-        self.low_cnn = 0
-        self.high_cnn = 255
-        self.shape_cnn = (self.fenv_config['n_rows'] * self.fenv_config['scaling_factor'],
-                          self.fenv_config['n_cols'] * self.fenv_config['scaling_factor'],
-                          self.fenv_config['n_channels'])
-        
     
-    def obs_reset(self):
-        plan_data_dict = self._setup_plan() # creates an empty plan
-        if self.fenv_config['mask_flag']:
-            plan_data_dict = self._mask_plan(plan_data_dict) # only gets the false walls. updating happens afew line later
-            if self.fenv_config['load_valid_plans_flag']:
-                self.desired_areas = copy.deepcopy(self.sampled_desired_areas)
-            else:
-                self.desired_areas = self._configure_areas(plan_data_dict['masked_area'])
-            plan_data_dict['desired_areas'] = self.desired_areas
-            
-            ## update the plan_data_dict according to false walls
-            for fwall_name , fwalls_coord in plan_data_dict['fwalls_coords'].items():
-                plan_data_dict = self._setup_plan(plan_data_dict=plan_data_dict, walls_coords=plan_data_dict['fwalls_coords'], active_wall_name=fwall_name)
-                plan_data_dict = self.painter.updata_obs_mat(plan_data_dict, fwall_name)
-                plan_data_dict = self.rextractor.update_room_dict(plan_data_dict, fwall_name)
-        else:
-            self.mask_numbers = 0
-            self.desired_areas = self._configure_areas(masked_area=0)
-            plan_data_dict['desired_areas'] = self.desired_areas
+    def obs_reset(self, episode):
+        plan_data_dict = self.plan_construcror.get_plan_data_dict(episode=episode)
+        self.input_plan_data_dict = copy.deepcopy(plan_data_dict)
         
-        plan_data_dict['room_wall_occupied_positions'].extend(np.argwhere(plan_data_dict['moving_ones']==1).tolist())
-        plan_data_dict['obs_mat_mask'] = 1 - plan_data_dict['moving_ones']
-        # plan_data_dict = self._adjust_fenv_config(plan_data_dict)
+        self.wall_names_deque = deque([f"wall_{i+1}" for i in range(plan_data_dict['mask_numbers'], plan_data_dict['mask_numbers']+plan_data_dict['n_walls'])], maxlen=plan_data_dict['n_walls'])
+        self.room_names_deque = deque([f"room_{i+1}" for i in range(plan_data_dict['mask_numbers'], plan_data_dict['mask_numbers']+plan_data_dict['n_rooms'])], maxlen=plan_data_dict['n_rooms'])
+
+        self.active_wall_name = None  
+        self.active_wall_status = None 
         
-        if self.fenv_config['env_planning'] == 'Dynamic':
-            plan_data_dict = self._setup_walls(plan_data_dict)
-            
-            for iwall_name , iwalls_coord in plan_data_dict['iwalls_coords'].items():
-                plan_data_dict = self._setup_plan(plan_data_dict=plan_data_dict, walls_coords=plan_data_dict['iwalls_coords'], active_wall_name=iwall_name)
-                plan_data_dict = self.painter.updata_obs_mat(plan_data_dict, iwall_name)
-                plan_data_dict = self.rextractor.update_room_dict(plan_data_dict, iwall_name)
+        self.observation, plan_data_dict = self._make_observation(plan_data_dict)
         
-        self.wall_names_deque = deque([f"wall_{i+1}" for i in range(self.mask_numbers, 
-                                                                    self.fenv_config['n_walls'] + self.mask_numbers)], 
-                                          maxlen=self.fenv_config['n_walls'])
+        if self.fenv_config['action_masking_flag']:
+            self.observation = {
+                'action_mask': self.action_parser.get_masked_actions(plan_data_dict),
+                'action_avail': np.ones(self.fenv_config['n_actions'], dtype=np.int16),
+                'real_obs': self.observation}
+        
+        plan_data_dict.update({'obs_arr_conv': self.observation})
+        
+        self.done = False
+        
+        plan_data_dict = self.state_composer.update_block_cells(plan_data_dict)
         
         self.plan_data_dict = copy.deepcopy(plan_data_dict)
         
-        self.observation = self._make_observation(observation_matrix=self.plan_data_dict['moving_labels'])
-        self.plan_data_dict.update({'obs_arr_conv': self.observation})
-        
-        self.done = False
         return self.observation
         
-        
-    def update(self, active_wall_name=None, action=None):
-        self.active_wall_name = active_wall_name
+    
+    
+    def update(self, episode, action, time_step):
+        self.episode = episode
+        if time_step > self.fenv_config['stop_time_step']:
+            print('wait in update of obervation')
+            raise ValueError('time_step went over then the limit!')
+            
+        plan_data_dict = copy.deepcopy(self.plan_data_dict)
         if self.fenv_config['env_planning'] == "One_Shot":
-            self.active_wall_status, new_walls_coords = self._select_wall(action=action)
+            if self.fenv_config['learn_room_size_category_order_flag']:
+                self.decoded_action_dict = self.action_parser.decode_action(plan_data_dict, action)
+            
+            if self.decoded_action_dict['action_status'] is not None:
+                self.active_wall_status, new_walls_coords = self.action_parser.select_wall(plan_data_dict, 
+                                                                                           self.decoded_action_dict)
+            else:
+                self.active_wall_status = 'rejected_by_missing_room'
+            
         elif self.fenv_config['env_planning'] == "Dynamic":
             shifted_wall_names_deque = self.wall_names_deque.copy()
             shifted_wall_names_deque.append(shifted_wall_names_deque[0]) # move the current agent to the last index. Because, we first need to draw the other agent, and then the current agent acts according to them
             previous_wall_id = f"wall_{shifted_wall_names_deque[-2].split('_')[1]}"
             
-            self.active_wall_status, new_walls_coords = self._transform_walls(action, previous_wall_id) # for asp, actions only include the current agent. So, we only transform the corressponding walls
+            self.active_wall_status, new_walls_coords = self.action_parser.transform_walls(action, previous_wall_id) # for asp, actions only include the current agent. So, we only transform the corressponding walls
         
         if self.active_wall_status == "check_room_area":
-            plan_data_dict = copy.deepcopy(self.plan_data_dict)
-            plan_data_dict = self._setup_plan(plan_data_dict=plan_data_dict, walls_coords=new_walls_coords, active_wall_name=self.active_wall_name)
-            plan_data_dict = self.painter.updata_obs_mat(plan_data_dict, active_wall_name) # here we update plan_data_dict based on the wall order
-            plan_data_dict = self.rextractor.update_room_dict(plan_data_dict, active_wall_name)
-            self.active_wall_status = self._get_active_wall_status(plan_data_dict, active_wall_name)
+            self.active_wall_name = self.decoded_action_dict['active_wall_name']
+            active_wall_i = self.decoded_action_dict['active_wall_i']
+            
+            try:
+                assert active_wall_i <= plan_data_dict['number_of_total_rooms'], 'active_wall_i is bigger than total_number_of_rooms'
+            except:
+                print('wait in update of observation')
+                raise ValueError('Probably sth need to be match with n_corners')
+            
+            plan_data_dict = self.plan_construcror.update_plan_with_active_wall(plan_data_dict=plan_data_dict, 
+                                                                                walls_coords=new_walls_coords, 
+                                                                                active_wall_name=self.active_wall_name)
+            
+            plan_data_dict = self.painter.updata_obs_mat(plan_data_dict, self.active_wall_name) # here we update plan_data_dict based on the wall order
+            
+            plan_data_dict = self.rextractor.update_room_dict(plan_data_dict, self.active_wall_name)
+            
+            self.active_wall_status = self._get_active_wall_status(plan_data_dict, self.active_wall_name)
             
             if self.active_wall_status == "accepted":
+                ### Note: active_wall_status will probably change in this section
+                plan_data_dict['accepted_actions'].append(action)
+                plan_data_dict['wall_types'].update({self.decoded_action_dict['active_wall_name']: self.decoded_action_dict['wall_type']})
                 plan_data_dict['room_wall_occupied_positions'].extend(np.argwhere(plan_data_dict['moving_ones']==1).tolist())
-                self.plan_data_dict = copy.deepcopy(plan_data_dict)
                 self.wall_names_deque.append(self.wall_names_deque[0])
+                
+                del plan_data_dict['room_i_per_size_category'][self.decoded_action_dict['room_size_cat_name']][0]
+                del plan_data_dict['room_area_per_size_category'][self.decoded_action_dict['room_size_cat_name']][0]   
             
-            self.observation = self._make_observation(observation_matrix=self.plan_data_dict['moving_labels'])
-            self.plan_data_dict.update({'obs_arr_conv': self.observation})
-        
-            self.done, self.active_wall_status = self._check_terminate(active_wall_name, self.active_wall_status)
+                
+                self.done, self.active_wall_status = self._check_terminate(plan_data_dict, 
+                                                                           self.active_wall_name, 
+                                                                           self.active_wall_status,
+                                                                           time_step)
+            
+            
+                self.observation, plan_data_dict = self._make_observation(plan_data_dict,
+                                                                          self.active_wall_name,
+                                                                          self.active_wall_status)
+            
+            
+                if self.fenv_config['action_masking_flag']:
+                    self.observation = {'action_mask': self.action_parser.get_masked_actions(plan_data_dict),
+                                        'action_avail': np.ones(self.fenv_config['n_actions'], dtype=np.int16),
+                                        'real_obs': self.observation}
+                
+                plan_data_dict.update({'obs_arr_conv': self.observation})
+                plan_data_dict.update({'observation': self.observation})
+                
+                plan_data_dict = self.state_composer.update_block_cells(plan_data_dict) # Aug 02: not sure if I need to bring it out of 'if'
+            
+                if self.active_wall_status in ['badly_stopped', 'well_finished']:
+                    self.edge_list = self._extract_edge_list(plan_data_dict)
+                    plan_data_dict.update({'edge_list': self.edge_list})
+            
+                self.plan_data_dict = copy.deepcopy(plan_data_dict) # only in this situation I change the self.plan_data_dict
+                
+            else:
+                self.done, self.active_wall_status = self._is_time_over(self.active_wall_status, time_step)
+                
+        else:
+            self.done, self.active_wall_status = self._is_time_over(self.active_wall_status, time_step)
+                
         
         return self.observation
     
-    
-    def _setup_plan(self, plan_data_dict=None, walls_coords=None, active_wall_name=None):
-        outline_dict = Outline(fenv_config=self.fenv_config).get_outline_data()
-        plan_dict = Plan(outline_dict=outline_dict, walls_coords=walls_coords).get_plan_data()
-        if walls_coords is None:
-            obs_mat = np.zeros((self.fenv_config['n_rows'], self.fenv_config['n_cols']), dtype=int)
-            plan_data_dict = {'outline_segments': plan_dict['segments_dict']['outline'],
-                              'inline_segments': {},
-                              'walls_segments': {},
-                              'walls_coords': {},
-                              
-                              'base_obs_mat': obs_mat,
-                              'base_obs_mat_w': obs_mat,
-                              'base_obs_mat_for_dot_prod': 1 - obs_mat,
-                              
-                              'obs_mat': obs_mat,
-                              'obs_mat_w': obs_mat,
-                              'obs_mat_for_dot_prod': 1 - obs_mat,
-                              
-                              'moving_labels': obs_mat,
-                              'moving_ones': obs_mat,
-                              
-                              'canvas_mat': obs_mat,
-                              'outside_positions': [],
-                              'room_wall_occupied_positions': [],
-                              
-                              'rooms_dict': {},
-                              'desired_areas': {},
-                              'areas': {},
-                              'delta_areas': {},
-                              'number_of_walls': self.fenv_config['n_walls'],
-                              
-                              'mask_numbers': 0,
-                              'masked_area': 0,
-                              }
-            
-        else:
-            # plan_data_dict = copy.deepcopy(self.plan_data_dict)
-            plan_data_dict['inline_segments'].update({k: v for k, v in plan_dict['segments_dict']['inline'].items() if active_wall_name in k})
-            plan_data_dict['walls_segments'].update({k: v for k, v in plan_dict['walls_segments_dict'].items() if active_wall_name in k})
-            plan_data_dict['walls_coords'].update({active_wall_name: plan_dict['walls_dict'][active_wall_name]})
-            
-        return plan_data_dict
-    
-    
-    def _mask_plan(self, plan_data_dict):
-        self.blackbox_min_length = 1
-        self.blackbox_max_length = int(self.fenv_config['max_x']/2)
-        self.blackbox_min_width = 1
-        self.blackbox_max_width = int(self.fenv_config['max_y']/2)
-        
-        if self.fenv_config['plan_config_source_name'] in ['test_config', 'load_fixed_config', 'create_fixed_config']:
-            self.mask_numbers = self.fenv_config['mask_numbers']
-            self.masked_corners = self.fenv_config['masked_corners']
-            
-            self.mask_lengths = self.fenv_config['mask_lengths']
-            self.mask_widths = self.fenv_config['mask_widths']
-            self.masked_area = self.fenv_config['masked_area'] 
-            self.sampled_desired_areas = self.fenv_config['sampled_desired_areas']
-            
-        elif self.fenv_config['plan_config_source_name'] == 'load_random_config':
-                env_data_df = pd.read_csv(self.fenv_config['env_data_csv_path'], nrows=self.fenv_config['nrows_of_env_data_csv'])
-                sampled_plan = env_data_df.sample()
-                self.mask_numbers = int(sampled_plan['mask_numbers'].values.tolist()[0])
-                masked_corners = list(map(str, sampled_plan['masked_corners'].tolist()[0][1:-1].split(',') ) )
-                self.masked_corners = [cor.replace("'","").strip() for cor in masked_corners]
-                self.mask_lengths = np.array(list(map(float, sampled_plan['mask_lengths'].tolist()[0][1:-1].split(','))), dtype=np.int32).tolist()
-                self.mask_widths = np.array(list(map(float, sampled_plan['mask_widths'].tolist()[0][1:-1].split(','))), dtype=np.int32).tolist()
-                self.masked_area = np.sum([(L+1)*(W+1) for L, W in zip(self.mask_lengths, self.mask_widths)])
-                sampled_desired_areas = list(map(float, sampled_plan['desired_areas'].tolist()[0][1:-1].split(',')))
-                self.sampled_desired_areas = {f"room_{i+1+self.mask_numbers}":a for i, a in enumerate(sampled_desired_areas)}
-            
-        else: # self.plan_config_source_name == 'create_random_config':
-            while True:
-                self.mask_numbers = np.random.randint(4) + 1
-                self.masked_corners = np.random.choice(list(self.fenv_config['corners'].keys()), size=self.mask_numbers, replace=False)    
-                
-                self.mask_lengths = np.random.randint(self.blackbox_min_length, self.blackbox_max_length, size=self.mask_numbers)
-                self.mask_widths = np.random.randint(self.blackbox_min_width, self.blackbox_max_width, size=self.mask_numbers)
-                
-                self.masked_area = np.sum([(L+1)*(W+1) for L, W in zip(self.mask_lengths, self.mask_widths)])
-                if self.masked_area <= self.fenv_config['total_area'] / 2:
-                    break
-        
-        fwalls_coords = {}
-        rectangles_vertex = [] #{}
-        for i, mask_cor in enumerate(self.masked_corners):
-            if mask_cor == 'corner_00':
-                rect_vertex = (0, 0)
-                fwall_anchor_coord = (self.mask_lengths[i], self.mask_widths[i])
-                fwall_back_coord = (fwall_anchor_coord[0]-1, fwall_anchor_coord[1])
-                fwall_front_coord = (fwall_anchor_coord[0], fwall_anchor_coord[1]-1)
-
-            elif mask_cor == 'corner_01':
-                rect_vertex = (self.fenv_config['max_x']-self.mask_lengths[i], 0)
-                fwall_anchor_coord = (self.fenv_config['max_x']-self.mask_lengths[i], self.mask_widths[i])
-                fwall_back_coord = (fwall_anchor_coord[0]+1, fwall_anchor_coord[1])
-                fwall_front_coord = (fwall_anchor_coord[0], fwall_anchor_coord[1]-1)
-                
-            elif mask_cor == 'corner_10':
-                rect_vertex = (0, self.fenv_config['max_y']-self.mask_widths[i])
-                fwall_anchor_coord = (self.mask_lengths[i], self.fenv_config['max_y']-self.mask_widths[i])
-                fwall_back_coord = (fwall_anchor_coord[0], fwall_anchor_coord[1]+1)
-                fwall_front_coord = (fwall_anchor_coord[0]-1, fwall_anchor_coord[1])
-                
-            elif mask_cor == 'corner_11':
-                rect_vertex = (self.fenv_config['max_x']-self.mask_lengths[i], self.fenv_config['max_y']-self.mask_widths[i])
-                fwall_anchor_coord = (self.fenv_config['max_x']-self.mask_lengths[i], self.fenv_config['max_y']-self.mask_widths[i])
-                fwall_back_coord = (fwall_anchor_coord[0], fwall_anchor_coord[1]+1)
-                fwall_front_coord = (fwall_anchor_coord[0]+1, fwall_anchor_coord[1])
-            
-            rectangles_vertex.append(rect_vertex) # rectangles_vertex[mask_cor] =  rect_vertex
-            
-            fwalls_coords.update({f'wall_{i+1}': {'anchor_coord': fwall_anchor_coord,
-                                                  'back_open_coord': fwall_back_coord,
-                                                  'front_open_coord': fwall_front_coord}})
-        
-        valid_points_for_sampling = self._get_valid_points_for_sampling(plan_data_dict)
-        for fwall_name, fwall_coord in fwalls_coords.items():
-            fwall_coords = WallGenerator(self.fenv_config).make_walls(valid_points_for_sampling, fwall_coord, wall_name=fwall_name)
-            fwalls_coords[fwall_name] = fwall_coords[fwall_name]
-        
-        # desired_areas_ = copy.deepcopy(plan_data_dict['desired_areas'])
-        plan_data_dict.update({
-        'mask_numbers': self.mask_numbers,
-        'mask_lengths': self.mask_lengths,
-        'mask_widths': self.mask_widths,
-        'fwalls_coords': fwalls_coords,
-        'masked_area': self.masked_area,
-        'rectangles_vertex': rectangles_vertex,
-        'obs_mat_mask': np.ones((self.fenv_config['n_rows'], self.fenv_config['n_cols']), dtype=int),
-        'number_of_walls': self.fenv_config['n_walls'] + self.mask_numbers,
-        })
-        
-        return plan_data_dict
-    
-    
-    def _configure_areas(self, masked_area):
-        if self.fenv_config['plan_config_source_name'] in ['create_fixed_config', 'create_random_config']:
-            free_area = self.fenv_config['total_area'] - masked_area
-            middle_area = np.floor(free_area / (self.fenv_config['n_walls']+1))
-            min_area = np.floor(middle_area/2)
-            max_area = min_area + middle_area
-            areas_config = {f'room_{i+1}': list(np.random.randint(min_area, max_area , 1)/1.0)[0] for i in range(self.mask_numbers, self.fenv_config['n_walls']+self.mask_numbers)}
-            sum_areas_except_last_room = np.sum(list(areas_config.values()))
-            areas_config.update({f"room_{self.fenv_config['n_walls']+self.mask_numbers+1}": free_area - sum_areas_except_last_room}) # areas_config.update({f"room_{self.fenv_config['n_walls']+self.mask_numbers+1}": self.fenv_config['total_area'] - sum_areas_except_last_room})
-        else:
-            areas_config = self.fenv_config['sampled_desired_areas']
-        return areas_config
-        
-        
-    def _adjust_fenv_config(self, plan_data_dict):
-        masked_area = np.sum(plan_data_dict['moving_ones'])
-        print('masked_area', masked_area)
-        # total_area = self.fenv_config['max_x'] * self.fenv_config['max_y']
-        areas_config = self.fenv_config['areas_config']
-        adjusting_rate = 1 - (masked_area / self.fenv_config['total_area'])
-        areas_config_ = {room_name:0 for room_name in areas_config.keys()}
-        sum_desired_areas = 0
-        non_last_room_names = list(areas_config.keys())[:-1]
-        last_room_name = list(areas_config.keys())[-1]
-        for room_name in non_last_room_names:
-            adjusted_room_area = int(adjusting_rate * areas_config[room_name])
-            areas_config_[room_name] = adjusted_room_area
-            sum_desired_areas += adjusted_room_area
-        
-        areas_config_[last_room_name] = self.fenv_config['total_area'] - areas_config[last_room_name] - sum_desired_areas
-        plan_data_dict['desired_areas'] = {f'room_{i}': a for i, a in enumerate(list(areas_config_.values()), plan_data_dict['mask_numbers']+1)}
-        return plan_data_dict
-
-    
-    def _setup_walls(self, plan_data_dict):
-        valid_points_for_sampling = self._get_valid_points_for_sampling(plan_data_dict)
-        walls_coords = WallGenerator(fenv_config=self.fenv_config).make_walls(valid_points_for_sampling)
-        if not isinstance(walls_coords, dict):
-            raise ValueError("-.- observation: walls_coords must be dict!")
-        plan_data_dict['iwalls_coords'] = walls_coords
-        return plan_data_dict
-    
-    
-    def _select_wall(self, action=None):
-        current_walls_coords = self.plan_data_dict['walls_coords']
-        new_walls_coords = copy.deepcopy(current_walls_coords)
-        num_current_walls = len(current_walls_coords)
-        
-        ### select a new wall
-        new_wall_name = f"wall_{num_current_walls+1}"
-        w_i, x, y = self.fenv_config['action_to_acts_tuple_dic'][action]
-        w_coords = np.array(self.fenv_config['wall_set'][w_i])
-        w_coords[:,0] += x
-        w_coords[:,1] += y
-        
-        new_wall = {'back_open_coord': w_coords[0],
-                    'anchor_coord': w_coords[1],
-                    'front_open_coord': w_coords[2]}
-        
-        back_position = self._cartesian2image_coord(new_wall['back_open_coord'][0], new_wall['back_open_coord'][1], self.fenv_config['max_y'])
-        anchor_position = self._cartesian2image_coord(new_wall['anchor_coord'][0], new_wall['anchor_coord'][1], self.fenv_config['max_y'])
-        front_position = self._cartesian2image_coord(new_wall['front_open_coord'][0], new_wall['front_open_coord'][1], self.fenv_config['max_y'])
-        
-        if self.fenv_config['mask_flag']:
-            if list(anchor_position) in self.plan_data_dict['room_wall_occupied_positions']:
-                active_wall_status = "rejected_by_room"
-            elif tuple(back_position) in self.plan_data_dict['outside_positions']:
-                active_wall_status = "rejected_by_canvas"
-            elif tuple(anchor_position) in self.plan_data_dict['outside_positions']:
-                active_wall_status = "rejected_by_canvas"
-            elif tuple(front_position) in self.plan_data_dict['outside_positions']:
-                active_wall_status = "rejected_by_canvas"
-            else:
-                active_wall_status = "check_room_area"
-        else:
-            if list(anchor_position) in self.plan_data_dict['room_wall_occupied_positions']:
-                active_wall_status = "rejected_by_room"
-            else:
-                active_wall_status = "check_room_area"
-        
-        if active_wall_status == "check_room_area":
-            valid_points_for_sampling = self._get_valid_points_for_sampling(self.plan_data_dict)
-            new_wall_coords = WallGenerator(self.fenv_config).make_walls(self.plan_data_dict, new_wall, wall_name=new_wall_name)
-            new_walls_coords.update(new_wall_coords)
-        
-        return active_wall_status, new_walls_coords
-     
-     
-    def _get_valid_points_for_sampling(self, plan_data_dict):
-        valid_points_for_sampling = np.argwhere(plan_data_dict['moving_ones']==0)
-        valid_points_for_sampling = [[r, c] for r, c in valid_points_for_sampling if (r%2==0 and c%2==0 and r!=0 and c!=0 and r!=self.fenv_config['max_x'] and c!=self.fenv_config['max_y'])]
-       
-        return np.array(valid_points_for_sampling)
-       
-   
-    def _transform_walls(self, actions, previous_wall_id): # in asp actions includes the current wall, so we only trasnform the current wall
-        current_walls_coords = self.plan_data_dict[0]['walls_coords'] # current_walls_coords means the walls before transformation
-        new_walls_coords = copy.deepcopy(current_walls_coords)
-        current_moving_wall_names = [f"wall_{agent_name.split('_')[1]}" for agent_name in actions.keys()]
-        current_moving_wall_coords = {wall_name:current_walls_coords[wall_name] for wall_name in current_moving_wall_names}
-        for (wall_name, wall_coords), (action_for_agent, action) in zip(current_moving_wall_coords.items(), actions.items()):
-            if self.fenv_config['action_dict'][action] == 'no_action':
-                pass
-            else:
-                n_wall = WallTransform(wall_name, wall_coords, action, self.plan_data_dict, previous_wall_id, self.fenv_config).transform()
-                new_walls_coords[wall_name] = list(n_wall.values())[0]
-        self.__check_new_walls_coords(new_walls_coords)      
-        active_wall_status = "check_room_area"
-        return active_wall_status, new_walls_coords
-    
-        
-    def _make_observation(self, observation_matrix):
-        def __get_cnn_obs(observation_matrix):
-            if self.fenv_config['n_channels'] == 3:
-                self.obs_arr_conv = self._get_obs_arr_for_conv(observation_matrix)
-            else:
-                K = 250 // (self.plan_data_dict['number_of_walls']+1) # for normalization
-                self.obs_arr_conv = np.cast['uint8'](np.expand_dims(observation_matrix*K, axis=2))
-        
-            return copy.deepcopy(self.obs_arr_conv)
-        
-        def __get_fc_obs(observation_matrix):
-            if self.fenv_config['env_planning'] == "One_Shot":
-                vector_state_representation = np.array(self._wall_data_extractor_for_single_agent(self.plan_data_dict))
-            else:
-                vector_state_representation = np.array(self._wall_data_extractor(self.plan_data_dict))
-                
-            if self.fenv_config['use_areas_info_into_observation_flag']:
-                desired_areas_dict = self.plan_data_dict['desired_areas']
-                achieved_areas_dict = copy.deepcopy(self.plan_data_dict['desired_areas'])
-                delta_areas_dict = self.fenv_config['areas_config']
-                
-                for room_name, achieved_area in self.plan_data_dict['areas'].items():
-                    achieved_areas_dict[room_name] = achieved_area
-                for room_neam, delta_area in self.plan_data_dict['delta_areas'].items():
-                    delta_areas_dict[room_name] = delta_area
-                  
-                desired_areas_list = list(desired_areas_dict.values())
-                achieved_areas_list = list(achieved_areas_dict.values())
-                delta_areas_list = list(delta_areas_dict.values())
-                
-                all_area_related_info = np.array(desired_areas_list + achieved_areas_list + delta_areas_list)
-                all_area_related_info_normalized = all_area_related_info/self.fenv_config['max_y']
-                
-                vector_state_representation = np.concatenate((vector_state_representation, all_area_related_info_normalized))
-            
-            if self.fenv_config['fixed_fc_observation_space']:
-                if self.fenv_config['net_arch'] in ['fccnn', 'cnnfc']:
-                    fc_len = self.observation_space[0].shape[0]
-                else:
-                    fc_len = self.observation_space.shape[0]
-                additional_vec_fc = -1 * np.ones(fc_len-len(vector_state_representation))
-                vector_state_representation = np.concatenate((vector_state_representation, additional_vec_fc), axis=-1)
-            
-            return vector_state_representation.astype(np.float)
-            
-        if self.fenv_config['net_arch'] == 'cnn':
-            self.observation_cnn = __get_cnn_obs(observation_matrix)            
-        elif self.fenv_config['net_arch'] == 'fc':
-            self.observation_fc = __get_fc_obs(observation_matrix)
-        else:
-            self.observation_cnn = __get_cnn_obs(observation_matrix)
-            self.observation_fc = __get_fc_obs(observation_matrix)
-            
-        ## CnnFc
-        if self.fenv_config['net_arch'] == 'cnn':
-            observation = copy.deepcopy(self.observation_cnn)
-            
-        elif self.fenv_config['net_arch'] == 'fc':
-            observation = copy.deepcopy(self.observation_fc)
-            
-        elif self.fenv_config['net_arch'] == 'cnnfc':
-            observation = (self.observation_cnn, self.observation_fc)
-
-        elif self.fenv_config['net_arch'] == 'fccnn':
-            observation = (self.observation_fc, self.observation_cnn)
-            
-            # assert np.all(self.observation_fc.shape == self.observation_space[0].shape)
-            # assert np.all(self.observation_cnn.shape == self.observation_space[1].shape)
-        return observation
     
     
     def _get_active_wall_status(self, plan_data_dict, active_wall_name):
         wall_i = int(active_wall_name.split('_')[1])
         room_name = f"room_{wall_i}"
-        
-        def __check_area_status():
-            active_wall_abs_delta_area = abs(plan_data_dict['delta_areas'][room_name])
-            if active_wall_abs_delta_area <= self.fenv_config['area_tolerance']:
-                return True
-            else:
-                return False
-        
-        def __check_proportion_status():
-            proportions = plan_data_dict['rooms_dict'][room_name]['proportions']
-            if (min(proportions) >= self.fenv_config['min_desired_proportion']) and \
-                (max(proportions) <= self.fenv_config['max_desired_proportion']):
-                return True
-            else:
-                return False
-        
-        # if __check_area_status() and __check_proportion_status():
-        #     active_wall_status = 'accepted'
-        # elif not __check_area_status() and not __check_proportion_status():
-        #     active_wall_status = 'rejected_by_both_area_and_proportion'
-        # elif __check_area_status() and not __check_proportion_status():
-        #         active_wall_status = 'rejected_by_proportion_but_accepted_by_area'
-        # elif not __check_area_status() and __check_proportion_status():
-        #         active_wall_status = 'rejected_by_area_but_accepted_by_proportion'
-                
-                
-        if self.fenv_config['is_area_considered'] and self.fenv_config['is_proportion_considered']:
-            if __check_area_status() and __check_proportion_status():
-                return 'accepted'
-            else:
-                return 'rejected_by_both_area_and_proportion'
-        elif self.fenv_config['is_area_considered'] and not self.fenv_config['is_proportion_considered']:
-            if __check_area_status():
-                return 'accepted'
-            else:
-                return 'rejected_by_area'
-        elif not self.fenv_config['is_area_considered'] and self.fenv_config['is_proportion_considered']:
-            if __check_proportion_status():
-                return 'accepted'
-            else:
-                return 'rejected_by_proportion'
-        else:
-            return 'accepted'
 
-        # return active_wall_status
-    
-    
-    def _distance(self, coord_s, coord_e):
-        return np.linalg.norm(np.array(coord_s)-np.array(coord_e))
+        if len(plan_data_dict['areas']) <= plan_data_dict['number_of_total_walls']:#wall_i != plan_data_dict['number_of_total_walls']:
+            if self.fenv_config['is_area_considered'] and self.fenv_config['is_proportion_considered']:
+                if self.__check_area_status(plan_data_dict, room_name) and self.__check_proportion_status(plan_data_dict, room_name):
+                    return 'accepted'
+                else:
+                    return 'rejected_by_both_area_and_proportion'
+            elif self.fenv_config['is_area_considered'] and not self.fenv_config['is_proportion_considered']:
+                if self.__check_area_status(plan_data_dict, room_name):
+                    return 'accepted'
+                else:
+                    return 'rejected_by_area'
+            elif not self.fenv_config['is_area_considered'] and self.fenv_config['is_proportion_considered']:
+                if self.__check_proportion_status(plan_data_dict, room_name):
+                    return 'accepted'
+                else:
+                    return 'rejected_by_proportion'
+            else:
+                raise ValueError('No design constraints have been considered!')
+                # return 'accepted'
         
-    
-    def _wall_data_extractor_for_single_agent(self, plan_data_dict):
-        important_points = ['start_of_wall', 'before_anchor', 'anchor', 'after_anchor', 'end_of_wall']
-        def __add_wall_important_points(plan_data_dict):
-            wall_coords_template = {k: [-1, -1] for k in important_points}
-            wall_important_points_dict = {f'wall_{i}': copy.deepcopy(wall_coords_template) for i in range(1, self.plan_data_dict['number_of_walls']+1)}
+        elif len(plan_data_dict['areas']) == plan_data_dict['number_of_total_walls']+1:
+            last_room_name = plan_data_dict['last_room']['last_room_name']  
+            if self.fenv_config['is_area_considered'] and self.fenv_config['is_proportion_considered']:
+                if self.__check_area_status(plan_data_dict, room_name) and self.__check_proportion_status(plan_data_dict, room_name) and \
+                    self.__check_area_status(plan_data_dict, last_room_name) and self.__check_proportion_status(plan_data_dict, last_room_name):
+                    return 'accepted'
+                else:
+                    return 'rejected_by_both_area_and_proportion'
+            elif self.fenv_config['is_area_considered'] and not self.fenv_config['is_proportion_considered']:
+                if self.__check_area_status(plan_data_dict, room_name) and self.__check_area_status(plan_data_dict, last_room_name):
+                    return 'accepted'
+                else:
+                    return 'rejected_by_area'
+            elif not self.fenv_config['is_area_considered'] and self.fenv_config['is_proportion_considered']:
+                if self.__check_proportion_status(plan_data_dict, room_name) and self.__check_proportion_status(plan_data_dict, last_room_name):
+                    return 'accepted'
+                else:
+                    return 'rejected_by_proportion'
+            else:
+                raise ValueError('No design constraints have been considered!')
+                # return 'accepted'
             
-            for wall_name, wall_data in plan_data_dict['walls_coords'].items():
-                back_segment = wall_data['back_segment']
-                front_segment = wall_data['front_segment']
-                wall_important_points_dict[wall_name].update({ 'start_of_wall': list(back_segment['reflection_coord']),
-                                                               'before_anchor': list(back_segment['end_coord']),
-                                                               'anchor':        list(back_segment['start_coord']),
-                                                               'after_anchor':  list(front_segment['end_coord']),
-                                                               'end_of_wall':   list(front_segment['reflection_coord']) })
-            return wall_important_points_dict
-    
-        def __add_walls_to_corners_distance(plan_data_dict, wall_important_points_dict):
-            # 5 wall's important points to 4 corners
-            walls_to_corners_distance_dict = {wall_name: list(-1*np.ones((5*4),dtype=float)) for wall_name in wall_important_points_dict.keys()}
-            
-            for wall_name in walls_to_corners_distance_dict.keys(): # 3
-                wall_to_corner_dist_vec = []
-                for point_name in important_points: #5
-                    for corner_name, corner_coord in self.fenv_config['corners'].items(): # 4
-                        d = self._distance(wall_important_points_dict[wall_name][point_name], corner_coord)
-                        wall_to_corner_dist_vec.append(d)
-            
-                walls_to_corners_distance_dict[wall_name] = copy.deepcopy(wall_to_corner_dist_vec)
-            return walls_to_corners_distance_dict
-            
-        def __add_walls_to_walls_distance(plan_data_dict, wall_important_points_dict):
-            n_walls = self.plan_data_dict['number_of_walls']
-            mask_numbers = self.plan_data_dict['mask_numbers'] if self.fenv_config['mask_flag'] else 0
-            walls_to_walls_distance_dict = {}
-            for i in range(mask_numbers, n_walls):
-                for j in range(i+1, n_walls):
-                    walls_to_walls_distance_dict.update({
-                        f"wall_{i+1}_to_wall_{j+1}": list(-1*np.ones((5*5),dtype=float))
-                        })
-                    
-            for wall_name_s in wall_important_points_dict.keys():
-                wall_s_i = int(wall_name_s.split('_')[-1])
-                for wall_name_e in wall_important_points_dict.keys():
-                    wall_e_i = int(wall_name_e.split('_')[-1])
-                    if wall_e_i > wall_s_i:
-                        wall_to_wall_dist_vec = []
-                        for point_name_s in important_points:
-                            for point_name_e in important_points:
-                                d = self._distance(wall_important_points_dict[wall_name_s][point_name_s],
-                                                   wall_important_points_dict[wall_name_e][point_name_e])
-                                wall_to_wall_dist_vec.append(d)      
-                        walls_to_walls_distance_dict[f"{wall_name_s}_to_{wall_name_e}"] = copy.deepcopy(wall_to_wall_dist_vec)
-            return walls_to_walls_distance_dict
-            
-        wall_important_points_dict = __add_wall_important_points(plan_data_dict)
-        wall_names = list(wall_important_points_dict.keys())
-        if self.fenv_config['mask_flag']:
-            if self.fenv_config['net_arch'] != 'fc':
-                wall_names = wall_names[self.plan_data_dict['mask_numbers']:]
-        wall_important_points_dict = {wall_name: wall_important_points_dict[wall_name] for wall_name in wall_names}       
-        
-        walls_to_corners_distance_dict = __add_walls_to_corners_distance(plan_data_dict, wall_important_points_dict)
-        walls_to_walls_distance_dict = __add_walls_to_walls_distance(plan_data_dict, wall_important_points_dict)
-        
-        
-        wall_important_coords = [coord for point in wall_important_points_dict.values() for coord in point.values()]
-        walls_to_corners_distance = [ds for ds in walls_to_corners_distance_dict.values()]
-        walls_to_walls_distance = [ds for ds in walls_to_walls_distance_dict.values()]
-        
-        wall_important_coords_vec = list(itertools.chain.from_iterable(wall_important_coords))
-        walls_to_corners_distance_vec = list(itertools.chain.from_iterable(walls_to_corners_distance))
-        walls_to_walls_distance_vec = list(itertools.chain.from_iterable(walls_to_walls_distance))
-        
-        state_vec = wall_important_coords_vec + walls_to_corners_distance_vec + walls_to_walls_distance_vec
-        
-        return np.array(state_vec)
-        
-    
-    def _distance_calculator(self, wall_state_dict):
-        wall_to_wall_dist_vec = []
-        wall_to_wall_dist_dict = {}
-        walls_name = list(wall_state_dict.keys())
-        n_walls = len(walls_name)
-        points_name = list(wall_state_dict[walls_name[0]].keys())
-        n_points = len(points_name)
-        for i in range(n_walls):
-            wall_name_s = walls_name[i]
-            for j in range(i+1, n_walls):
-                wall_name_e = walls_name[j]
-                for point_name_s in points_name:
-                    for point_name_e in points_name:
-                        d = self._distance(wall_state_dict[wall_name_s][point_name_s],
-                                           wall_state_dict[wall_name_e][point_name_e])
-                        wall_to_wall_dist_dict[f"{wall_name_s}_{wall_name_e}_{point_name_s}_{point_name_e}"] = d
-                        wall_to_wall_dist_vec.append(d)       
-        
-        wall_to_corner_dist_vec = []
-        wall_to_corner_dist_dict = {}
-        for wall_name in walls_name:
-            for point_name in points_name:
-                for corner_name, corner_coord in self.fenv_config['corners'].items():
-                    d = self._distance(wall_state_dict[wall_name][point_name], corner_coord)
-                    wall_to_corner_dist_dict[f"{wall_name}_{point_name}_{corner_name}"] = d
-                    wall_to_corner_dist_vec.append(d)
-        
-        all_dist_values = wall_to_wall_dist_vec + wall_to_corner_dist_vec
-        return all_dist_values
-    
-    
-    def _wall_data_extractor(self, plan_data_dict):
-        walls_state_vec = []
-        wall_state_dict = {}
-        for i in range(1, self.plan_data_dict['number_of_walls']+1):
-            wall_name = f"wall_{i}"
-            back_segment = plan_data_dict['walls_coords'][wall_name]['back_segment']
-            front_segment = plan_data_dict['walls_coords'][wall_name]['front_segment']
-            this_wall_state = {'start_of_wall': list(back_segment['reflection_coord']),
-                               'before_anchor': list(back_segment['end_coord']),
-                               'anchor':        list(back_segment['start_coord']),
-                               'after_anchor':  list(front_segment['end_coord']),
-                               'end_of_wall':   list(front_segment['reflection_coord'])}
-            
-            walls_state_vec.extend(list(this_wall_state.values()))
-            wall_state_dict[wall_name] = this_wall_state
-        
-        if self.fenv_config['only_straight_vertical_walls']:
-            anchor_x_list = []
-            for w_name, w_coord in wall_state_dict.items():
-                anchor_x = w_coord['anchor'][0]
-                anchor_x_list.append(anchor_x)
-            state_vec = anchor_x_list
         else:
-            walls_state_vec = list(itertools.chain.from_iterable(walls_state_vec))
+            raise ValueError('All required walls already have been drawn!')
             
-            all_dist_values = self._distance_calculator(wall_state_dict)
             
-            state_vec = walls_state_vec + all_dist_values
+    
+    def __check_area_status(self, plan_data_dict, room_name):
+        # print(f"_get_active_wall_status of observation room_name :{room_name}")
+        try:
+            active_wall_abs_delta_area = abs(plan_data_dict['delta_areas'][room_name])
+        except :
+            print("wait in _get_active_wall_status of observation")
+            raise ValueError('room_name does not exist!')
+        if active_wall_abs_delta_area <= self.fenv_config['area_tolerance']:
+            return True
+        else:
+            return False
         
-        return np.array(state_vec)
+        
+        
+    def __check_proportion_status(self, plan_data_dict, room_name):
+        # try:
+        room_shape = plan_data_dict['rooms_dict'][room_name]['room_shape']
+        # if room_shape == 'nonrectangular':
+        #     print(f"-- room_shape: {room_shape}")
+        delta_aspect_ratio = plan_data_dict['rooms_dict'][room_name]['delta_aspect_ratio']
+        # print(f" --- delta_aspect_ratio: {delta_aspect_ratio}")
+        
+        if delta_aspect_ratio <= self.fenv_config['aspect_ratios_tolerance']:
+        # except:
+            # print(f"some thing does not work correctly in __check_proportion_status of observation: room_name: {room_name}")
+        # if (min(proportions) >= self.fenv_config['min_desired_proportion']) and \
+        #     (max(proportions) <= self.fenv_config['max_desired_proportion']):
+            return True
+        else:
+            return False
     
     
-    def _get_obs_arr_for_conv(self, observation_matrix):
-        obs_arr_conv = np.zeros((self.fenv_config['n_rows']*self.fenv_config['scaling_factor'], 
-                                 self.fenv_config['n_cols']*self.fenv_config['scaling_factor'], 
-                                 self.fenv_config['n_channels']), dtype=np.uint8)
-        obs_arr_for_conv = np.zeros_like(obs_arr_conv) 
-        obs_mat_scaled = np.kron(observation_matrix,
-                                  np.ones((self.fenv_config['scaling_factor'], self.fenv_config['scaling_factor']), 
-                                          dtype=observation_matrix.dtype))
-        for r in range(self.fenv_config['n_rows']*self.fenv_config['scaling_factor']):
-            for c in range(self.fenv_config['n_cols']*self.fenv_config['scaling_factor']):
-                for v in list(self.fenv_config['color_map'].keys()): #[:self.fenv_config['n_rooms']+2]:
-                    if obs_mat_scaled[r,c] == v:
-                        obs_arr_for_conv[r,c,:] = list(  name_to_rgb(self.fenv_config['color_map'][v])  )
-        return obs_arr_for_conv
+    
+    def _check_terminate(self, plan_data_dict, active_wall_name, active_wall_status, time_step):
+        if len(plan_data_dict['areas']) == plan_data_dict['number_of_total_rooms']:
+            done = True
+            active_wall_status = 'well_finished'
+        
+        elif len(plan_data_dict['areas']) < plan_data_dict['number_of_total_walls']+1:
+            done, active_wall_status = self._is_time_over(active_wall_status, time_step)
+        
+        else:
+            raise ValueError('n_rooms cannot be bigger than num_desired_rooms')
+                
+        return done, active_wall_status
     
     
-    def _check_terminate(self, active_wall_name, active_wall_status):
-        if active_wall_name == f"wall_{self.plan_data_dict['number_of_walls']}":
-            if active_wall_status == 'accepted':        
-                active_wall_status = 'finished'
-                return True, active_wall_status
-        return False, active_wall_status
+    
+    def _is_time_over(self, active_wall_status, time_step):
+        done = False
+        # if self.fenv_config['random_agent_flag']:
+        if time_step >= self.fenv_config['stop_time_step']-1:
+            done = True
+            active_wall_status = 'badly_stopped'
+        return done, active_wall_status
+            
     
     
+    def _make_observation(self, plan_data_dict, active_wall_name=None, active_wall_status=None):
+        if active_wall_name is not None:
+            active_room_i = int(active_wall_name.split('_')[1])
+            active_room_name = f"room_{active_room_i}"
+        
+        if self.fenv_config['net_arch'] == 'Cnn':
+            self.observation_cnn = self.__get_cnn_obs(plan_data_dict) 
+            
+        elif self.fenv_config['net_arch'] == 'Fc':
+            self.observation_fc = self.__get_fc_obs(plan_data_dict, active_wall_name)
+            
+        elif self.fenv_config['net_arch'] == 'FcCnn':
+            self.observation_cnn = self.__get_cnn_obs(plan_data_dict)
+            self.observation_fc = self.__get_fc_obs(plan_data_dict, active_wall_name)
+            
+        elif self.fenv_config['net_arch'] == 'CnnGcn':
+            active_room_data_dict = self.__get_active_room_data_dict(plan_data_dict, active_wall_name)
+            
+            if active_wall_name is not None:
+                plan_data_dict.update({'active_rooms_data_dict': {active_room_name: active_room_data_dict}})
+                
+                if plan_data_dict['last_room']['last_room_name'] is not None:
+                    last_room_name = plan_data_dict['last_room']['last_room_name']
+                    last_room_data_dict = copy.deepcopy(active_room_data_dict)
+                    last_room_data_dict['current_area'] = plan_data_dict['areas'][last_room_name]
+                    last_room_data_dict['delta_area'] = plan_data_dict['delta_areas'][last_room_name]
+                    plan_data_dict['active_rooms_data_dict'].update({last_room_name: last_room_data_dict})
+                    
+                    plan_data_dict = self.__update_graph_data_numpy(plan_data_dict, active_room_name, last_room_name)
+                    
+                else:
+                    plan_data_dict = self.__update_graph_data_numpy(plan_data_dict, active_room_name)
+                    
+                    
+            else:
+                plan_data_dict.update({'active_rooms_data_dict': {}})
+
+            self.observation_cnn = self.__get_cnn_obs(plan_data_dict) 
+            plan_data_dict['plan_canvas_arr_old'] = copy.deepcopy(plan_data_dict['plan_canvas_arr'])
+            plan_data_dict['plan_canvas_arr'] = copy.deepcopy(self.observation_cnn)
+            
+            if self.fenv_config['gcn_obs_method'] == 'embedded_image_graph':
+                self.observation_gcn = self.__get_gcn_obs(plan_data_dict)
+            
+        elif self.fenv_config['net_arch'] == 'MetaFc':
+            self.observation_fc = self.__get_fc_obs(plan_data_dict, active_wall_name)
+            
+        else:
+            raise ValueError(f"{self.fenv_config['net_arch']} net_arch does not exist")
+            
+            
+        if self.fenv_config['net_arch'] == 'Cnn':
+            observation = copy.deepcopy(self.observation_cnn)
+            
+        elif self.fenv_config['net_arch'] == 'Fc':
+            observation = copy.deepcopy(self.observation_fc)
+            
+        elif self.fenv_config['net_arch'] == 'CnnFc':
+            observation = (self.observation_cnn, self.observation_fc)
+
+        elif self.fenv_config['net_arch'] == 'FcCnn':
+            observation = (self.observation_fc, self.observation_cnn)
+            
+        elif self.fenv_config['net_arch'] == 'CnnGcn':
+            if self.fenv_config['gcn_obs_method'] == 'embedded_image_graph':
+                observation = copy.deepcopy(self.observation_gcn)
+            elif self.fenv_config['gcn_obs_method'] == 'image':
+                observation = copy.deepcopy(self.observation_cnn)
+            elif self.fenv_config['gcn_obs_method'] == 'dummy_vector':
+                if self.fenv_config['action_masking_flag']:
+                    observation = np.zeros(self._observation_space['real_obs'].shape)
+                else:   
+                    observation = np.zeros(self._observation_space.shape)
+            else:
+                raise ValueError("gcn_obs_method is unvalid or not-implemented yet!")
+              
+        elif self.fenv_config['net_arch'] == 'MetaFc':
+            observation = copy.deepcopy(self.observation_fc)
+            
+        else:
+            raise ValueError(f"{self.fenv_config['net_arch']} net_arch does not exist")
+            
+            # assert np.all(self.observation_fc.shape == self.observation_space[0].shape)
+            # assert np.all(self.observation_cnn.shape == self.observation_space[1].shape)
+        return observation, plan_data_dict
+    
+    
+    
+    def __get_cnn_obs(self, plan_data_dict):
+        observation_matrix = plan_data_dict['moving_labels']
+        canvas_cnn = self.___update_canvas_cnn(plan_data_dict)
+        return canvas_cnn
+        # if self.fenv_config['n_channels'] == 3:
+        #     self.obs_arr_conv = self.state_composer.ta_get_obs_arr_for_conv(observation_matrix)
+        # else:
+        #     K = 250 // (plan_data_dict['number_of_total_walls']+1) # for normalization
+        #     self.obs_arr_conv = np.cast['uint8'](np.expand_dims(observation_matrix*K, axis=2))
+    
+        # return copy.deepcopy(self.obs_arr_conv)
+        
+        
+        
+    def ___update_canvas_cnn(self, plan_data_dict):
+        canvas_cnn_room_channel = copy.deepcopy(plan_data_dict['canvas_cnn'])
+        moving_labels = copy.deepcopy(plan_data_dict['moving_labels'])
+        
+        temp_mv = copy.deepcopy(moving_labels)
+        mask_numbers = plan_data_dict['mask_numbers']
+        for room_i in range(plan_data_dict['number_of_total_rooms'], 0, -1):
+            if room_i <= mask_numbers:
+                temp_mv[temp_mv == room_i] += 4
+            else:
+                temp_mv[temp_mv == room_i] += 10
+                
+        canvas_cnn_room_channel[1:-1, 1:-1] = temp_mv
+        
+        canvas_cnn_masked_channel = np.zeros(canvas_cnn_room_channel.shape)
+        if self.active_wall_status != 'well_finished':
+            canvas_cnn_masked_channel[1:-1, 1:-1] = 1 - plan_data_dict['moving_ones']
+        
+        canvas_cnn = np.zeros((*canvas_cnn_room_channel.shape, 2))
+        canvas_cnn[:, :, 0] = canvas_cnn_room_channel
+        canvas_cnn[:, :, 1] = canvas_cnn_masked_channel
+        return canvas_cnn
+    
+
+
+    def __get_fc_obs(self, plan_data_dict, active_wall_name):
+        vector_state_representation = -1 * np.ones(self.state_data_dict['len_state_vec'])
+        
+        if self.fenv_config['env_planning'] == "One_Shot":
+            walls_state_vector, _ = np.array(self.state_composer.wall_data_extractor_for_single_agent(plan_data_dict, 
+                                                                                                     active_wall_name), dtype=object)
+            
+            walls_state_vector = self._normalize_walls_state_vector(walls_state_vector)
+            
+            vector_state_representation[0:len(walls_state_vector)] = walls_state_vector
+            
+        else:
+            vector_state_representation = np.array(self._wall_data_extractor(plan_data_dict))
+            
+        if self.fenv_config['use_areas_info_into_observation_flag']:
+            desired_areas_dict = plan_data_dict['desired_areas']
+            desired_room_names = list(desired_areas_dict.keys()) #  the achived iare 0, but after some timeseteps they might change. see two lines later
+            achieved_areas_dict = {room_name:0 for room_name in desired_room_names} # in the begining achieved areas are 0. but a bit later they might be different. see a few lines below
+            delta_areas_dict = copy.deepcopy(desired_areas_dict) # in the degining the achieved areas are 0, so the delta = desired
+            
+            achieved_areas_dict.update({room_name:area for room_name, area in plan_data_dict['areas'].items() if room_name in desired_room_names})
+            
+            delta_areas_dict.update({room_name:desired_areas_dict[room_name]-achieved_areas_dict[room_name] for room_name in desired_room_names})
+            
+            desired_areas_list = list(desired_areas_dict.values())
+            achieved_areas_list = list(achieved_areas_dict.values())
+            delta_areas_list = list(delta_areas_dict.values())
+            
+            all_area_related_info = np.array(desired_areas_list + achieved_areas_list) # + delta_areas_list)
+            all_area_related_info_normalized = all_area_related_info/self.fenv_config['max_y']
+            
+            areas_state_vector = -1 * np.ones(self.state_data_dict['len_state_vec_for_rooms'])
+            try:
+                areas_state_vector[:len(all_area_related_info)] = all_area_related_info
+            except:
+                print('wait in __get_fc_obs of observation')
+                raise('the dimentions do not match!')
+            
+            areas_state_vector = self._normalize_areas_state_vector(areas_state_vector)
+            
+            vector_state_representation[self.state_data_dict['len_state_vec_for_walls']: self.state_data_dict['len_state_vec_for_walls_rooms']] = areas_state_vector #np.concatenate((vector_state_representation, all_area_related_info))
+            
+        
+        if self.fenv_config['use_edge_info_into_observation_flag']:
+            edge_state_vector = self._extract_adj_as_vector(plan_data_dict)
+            
+            vector_state_representation[self.state_data_dict['len_state_vec_for_walls_rooms']: self.state_data_dict['len_state_vec']] = edge_state_vector
+            
+        return vector_state_representation.astype(float)
+
+    
+
+    def _normalize_walls_state_vector(self, walls_state_vector):
+        normalized = np.array([val/30 if val != -1 else -1 for val in walls_state_vector])
+        return normalized
+    
+    
+    
+    def _normalize_areas_state_vector(self, areas_state_vector):
+        normalized = np.array([val/200 if val != -1 else -1 for val in areas_state_vector])
+        return normalized
+        
+
+
+    def __get_active_room_data_dict(self, plan_data_dict, active_wall_name):
+        if self.fenv_config['env_planning'] == "One_Shot":
+            _, active_room_data_dict = np.array(self.state_composer.wall_data_extractor_for_single_agent(plan_data_dict, 
+                                                                                                         active_wall_name))
+        
+        if active_room_data_dict is not None:
+            active_room_name = f"room_{active_wall_name.split('_')[1]}"
+            active_room_data_dict['current_area'] = plan_data_dict['areas'][active_room_name]
+            active_room_data_dict['delta_area'] = plan_data_dict['delta_areas'][active_room_name]
+        return active_room_data_dict
+    
+    
+    
+    def __update_graph_data_numpy(self, plan_data_dict, active_room_name, last_room_name=None):
+        graph_data_numpy = copy.deepcopy(plan_data_dict['graph_data_numpy'])
+        
+        ### features
+        partially_current_graph_features_dict_numpy = copy.deepcopy(graph_data_numpy['graph_features_numpy']['partially_current_graph_features_dict_numpy'])
+        fully_current_graph_features_dict_numpy = copy.deepcopy(graph_data_numpy['graph_features_numpy']['fully_current_graph_features_dict_numpy'])
+        
+        
+        try:
+            active_room_data_dict = plan_data_dict['active_rooms_data_dict'][active_room_name]
+        except :
+            print('wait in __update_graph_data_numpy of observation')
+            raise ValueError('There should be sth wrong with last_room')
+        
+        partially_current_graph_features_dict_numpy[active_room_name]['status'] = 1
+        fully_current_graph_features_dict_numpy[active_room_name]['status'] = 1
+        
+        for k, v in active_room_data_dict.items():
+            if 'area' in k:
+                partially_current_graph_features_dict_numpy[active_room_name][k] = v
+            fully_current_graph_features_dict_numpy[active_room_name][k] = v
+            
+            
+        if last_room_name is not None:
+            last_room_data_dict = plan_data_dict['active_rooms_data_dict'][last_room_name]
+        
+            partially_current_graph_features_dict_numpy[last_room_name]['status'] = 1
+            fully_current_graph_features_dict_numpy[last_room_name]['status'] = 1
+            
+            for k, v in last_room_data_dict.items():
+                if 'area' in k:
+                    partially_current_graph_features_dict_numpy[last_room_name][k] = v
+                fully_current_graph_features_dict_numpy[last_room_name][k] = v
+            
+        
+        graph_data_numpy['graph_features_numpy']['partially_current_graph_features_dict_numpy'] = copy.deepcopy(partially_current_graph_features_dict_numpy)
+        graph_data_numpy['graph_features_numpy']['fully_current_graph_features_dict_numpy'] = copy.deepcopy(fully_current_graph_features_dict_numpy)
+        
+        ### edges
+        current_edge_list = self._extract_edge_list(plan_data_dict)
+        
+        if current_edge_list:
+            graph_data_numpy['graph_edge_list_numpy']['partially_current_graph_edge_list_numpy'] = current_edge_list
+            graph_data_numpy['graph_edge_list_numpy']['fully_current_graph_edge_list_numpy'] = current_edge_list
+        
+        
+        plan_data_dict['graph_data_numpy_old'] = copy.deepcopy(plan_data_dict['graph_data_numpy'])
+        
+        plan_data_dict['graph_data_numpy'] = copy.deepcopy(graph_data_numpy)
+        
+        return plan_data_dict
+    
+    
+    
+    def __get_gcn_obs(self, plan_data_dict):
+        normalized_graph_data_numpy_old = self.state_composer.graph_normalization(plan_data_dict['graph_data_numpy_old'])
+        normalized_graph_data_numpy = self.state_composer.graph_normalization(plan_data_dict['graph_data_numpy'])
+        normalized_plan_canvas_arr_old = self.state_composer.image_normalization(plan_data_dict['plan_canvas_arr_old'])
+        normalized_plan_canvas_arr = self.state_composer.image_normalization(plan_data_dict['plan_canvas_arr'])
+        
+        context = {'graph_data_numpy_old': normalized_graph_data_numpy_old,
+                   'graph_data_numpy': normalized_graph_data_numpy,
+                   'plan_canvas_arr_old': normalized_plan_canvas_arr_old,
+                   'plan_canvas_arr': normalized_plan_canvas_arr}
+        
+        embeded_observation = self.state_composer.get_embeded_observation(context)
+        # embeded_observation = np.zeros((self.fenv_config['shape_gcn']))
+        return embeded_observation
+        
+      
+        
+    def _extract_edge_list(self, plan_data_dict):
+        layout_graph = LayoutGraph(plan_data_dict)
+        num_nodes, edge_list = layout_graph.extract_graph_data()
+        edge_list = [[edge[0], edge[1]] for edge in edge_list]
+        edge_list = np.array(edge_list).astype(float).tolist()
+        edge_list = [[min(edge), max(edge)] for edge in edge_list]
+        return edge_list
+        
+    
+    
+    def _extract_adj_as_vector(self, plan_data_dict):
+        edge_list = np.array(self._extract_edge_list(plan_data_dict), dtype=int)
+        adj_mat_achieved = np.zeros((self.fenv_config['maximum_num_real_rooms'], self.fenv_config['maximum_num_real_rooms']))
+        try:
+            if len(edge_list) > 0:
+                for edge in edge_list:
+                    adj_mat_achieved[edge[0]-1][edge[1]-1] = 1
+                    adj_mat_achieved[edge[1]-1][edge[0]-1] = 1
+        except:
+            print('wait in _extract_adj_as_vector of observation')
+            raise ValueError('Probably edge_list contains room_name larger then the number of rooms')
+            
+        adj_vec_achieved = []
+        for i, row in enumerate(list(adj_mat_achieved)):
+            adj_vec_achieved.extend(row[i+1:])
+        adj_vec_achieved = np.array(adj_vec_achieved)
+        
+        if len(plan_data_dict['adj_vec_desired']) == 0:
+            if self.fenv_config['plan_config_source_name'] != 'create_random_config':
+                raise ValueError("adj_vec_desired cannot be empty when create_random_config=True")
+            else:
+                plan_data_dict['adj_vec_desired'] = copy.deepcopy(adj_vec_achieved)
+            
+        adj_vec = np.concatenate((plan_data_dict['adj_vec_desired'], adj_vec_achieved), axis=-1)
+        return adj_vec
+        
+    
+        
+    @staticmethod
+    def __augment_cnn_observation(observation_arr):
+            observation_arr_090 = np.rot90(observation_arr, k=1, axes=(0, 1))
+            observation_arr_180 = np.rot90(observation_arr, k=2, axes=(0, 1))
+            observation_arr_270 = np.rot90(observation_arr, k=3, axes=(0, 1))
+            
+            observation_arr_flr = np.fliplr(observation_arr)
+            observation_arr_fud = np.flipud(observation_arr)
+            
+            observation_arr_090_flr = np.fliplr(observation_arr_090)
+            observation_arr_090_fud = np.flipud(observation_arr_090)
+            
+            observation_arr_180_flr = np.fliplr(observation_arr_180)
+            observation_arr_180_fud = np.flipud(observation_arr_180)
+            
+            observation_arr_270_flr = np.fliplr(observation_arr_270)
+            observation_arr_270_fud = np.flipud(observation_arr_270)
+            
+            
+            observation_arr = np.concatenate([observation_arr, 
+                                              observation_arr_flr,
+                                              observation_arr_fud,
+                                              
+                                              observation_arr_090,
+                                              observation_arr_090_flr,
+                                              observation_arr_090_fud,
+                                               
+                                              observation_arr_180,
+                                              observation_arr_180_flr,
+                                              observation_arr_180_fud,
+                                              
+                                              observation_arr_270,
+                                              observation_arr_270_flr,
+                                              observation_arr_270_fud,                                              
+                                              ], axis=2)
+            return observation_arr
+        
+        
+        
     @staticmethod
     def _cartesian2image_coord(x, y, max_y):
         return max_y-y, x
@@ -730,10 +715,11 @@ if __name__ == '__main__':
     from gym_floorplan.envs.fenv_config import LaserWallConfig
     fenv_config = LaserWallConfig().get_config()
     self = Observation(fenv_config)
-    observation = self.obs_reset()
-    active_wall_name = f"wall_{1+self.mask_numbers}"
-    for action in [992, 714, 874, 1688, 930, 1742, 635]:
-        self.update(active_wall_name=active_wall_name, action=action)
+    episode = None
+    observation = self.obs_reset(episode)
+    active_wall_name = f"wall_{1+self.plan_data_dict['mask_numbers']}"
+    for time_step, action in enumerate([992, 714, 874, 1456, 930, 134, 635]):
+        self.update(episode, action, time_step)
         
         if self.active_wall_status == "accepted":
             active_wall_name = f"wall_{int(self.active_wall_name.split('_')[1])+1}"

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Created on Mon Sep 20 00:09:58 2021
-
 @author: RK
 """
 
@@ -11,13 +10,13 @@ parser = argparse.ArgumentParser(description='Process some parameters.')
 parser.add_argument('--env_name', type=str, default='master_env-v0', help='Custom env flag') # pistonball_v4
 
 parser.add_argument('--num_iters',       type=int, default=1, help='Num iterations for tunner')
-parser.add_argument('--num_episodes',    type=int, default=1, help='Num episodes for trainer')
+parser.add_argument('--num_episodes',    type=int, default=2, help='Num episodes for trainer')
 parser.add_argument('--RLLIB_NUM_GPUS',  type=int, default=0, help='Number of GPUs')
 parser.add_argument('--num_workers',     type=int, default=1, help='Number of Workers')
 parser.add_argument('--local_mode_flag', type=int, default=1, help='set the local mode')
 
 parser.add_argument('--learner_name',     type=str, default='trainer',   help='Learner name, like tunner')
-parser.add_argument('--agent_first_name', type=str, default='dqn',      help='Learner name, like dqn')
+parser.add_argument('--agent_first_name', type=str, default='ppo',      help='Learner name, like dqn')
 parser.add_argument('--agent_last_name',  type=str, default='_Rainbow', help='Learner name, like Rainbow')
 
 parser.add_argument('--load_agent_flag', type=int, default=0, help='Restore trained agent')
@@ -41,6 +40,7 @@ import os
 import ray
 import time
 import json
+import shutil
 import numpy as np
 from pathlib import Path
 from datetime import datetime
@@ -48,6 +48,8 @@ from datetime import datetime
 from gym_floorplan.envs.fenv_config import LaserWallConfig
 from agent_config import AgentConfig
 from env_to_agent import EnvToAgent
+
+from json_reader import json_reader
 
 # %%
 class Runner:
@@ -59,11 +61,18 @@ class Runner:
         self._update_fenv_config()
         self._update_agent_config()
         
-        chkpt_path = self._get_latest_chkpt()
+        if args.load_agent_flag:
+            chkpt_path = self._get_latest_chkpt()
         
+    
         if args.load_agent_for_longer_training_flag:
-            self._get_plan_config_values(chkpt_path)
-        
+            assert self.fenv_config['plan_config_source_name'] == 'longer_training_config', "load_agent_for_longer_training_flag only works when you have a single set of"
+            self.fenv_config.update({
+                'plan_config_source_name': 'longer_training_config',
+                'learner_name': args.learner_name,
+                'agent_first_name': args.agent_first_name,
+                'chkpt_path': chkpt_path,                
+                }) 
     
     def _update_fenv_config(self):
         if args.env_name == 'master_env-v0':
@@ -76,7 +85,7 @@ class Runner:
             raise ValueError('Not a valid env_name')
         
         self.fenv_config.update({'env_name': args.env_name})
-    
+        
     
     def _update_agent_config(self):
         self.agent_config = AgentConfig().get_config()
@@ -93,7 +102,10 @@ class Runner:
             'learner_name': args.learner_name,
             'agent_first_name': args.agent_first_name,
             'agent_last_name': args.agent_last_name,
-            'custom_model_flag': self.fenv_config['custom_model_flag'],
+            'model_source': self.fenv_config['model_source'],
+            'model_name': self.fenv_config['model_name'],
+            'net_arch': self.fenv_config['net_arch'],
+            'use_lstm': self.fenv_config['use_lstm'],
             'load_agent_flag': bool(args.load_agent_flag),
             'save_agent_flag': bool(args.save_agent_flag),
             'checkpoint_freq': args.checkpoint_freq,
@@ -141,26 +153,6 @@ class Runner:
         return chkpt_path
         
     
-    def _get_plan_config_values(self, chkpt_path):
-        if self.agent_config['learner_name'] == 'trainer':
-            base_chkpt_dir = os.path.realpath(Path(chkpt_path).parents[1])
-        else:
-            base_chkpt_dir = os.path.realpath(Path(chkpt_path).parents[2])
-        fenv_config_npy_path = f"{base_chkpt_dir}/configs/fenv_config.npy" 
-        if self.fenv_config['plan_config_source_name'] in ['test_config', 'load_fixed_config', 'load_random_config']:
-            fenv_config = np.load(fenv_config_npy_path, allow_pickle=True).tolist()
-            
-        self.fenv_config.update({
-            'n_walls': fenv_config['n_walls'],
-            'mask_numbers': fenv_config['mask_numbers'],
-            'masked_corners': fenv_config['masked_corners'],
-            'mask_lengths': fenv_config['mask_lengths'],
-            'mask_widths': fenv_config['mask_widths'],
-            'masked_area': fenv_config['masked_area'],
-            'sampled_desired_areas': fenv_config['sampled_desired_areas'],
-            })
-        
-    
     def start(self, n_runs=1):
         for n in range(n_runs):
             print(f"====================================== Run number is: {n}")
@@ -176,35 +168,101 @@ class Runner:
                             object_store_memory=10**8,
                             )
             
-            env_to_agent = EnvToAgent(fenv_config=self.fenv_config, agent_config=self.agent_config)
-            env_to_agent.learn()
+            self.env_to_agent = EnvToAgent(fenv_config=self.fenv_config, agent_config=self.agent_config)
+            self.env_to_agent.learn()
             
             ray.shutdown()
         
+        self._terminate()
+        
+        
+    def _terminate(self):
+        print("\n\n ----- Terminating .... ==================================")
         end_time = time.time()
-        print("\n\n=========================================================")
         elapsed_time = end_time - self.start_time
-        print(f"Total time for {self.num_iterations_in_a_run} iterations was: {elapsed_time} (s)")    
+        
+        if args.save_agent_flag:
+            if args.learner_name == 'trainer':
+                self.chkpt_path = self.env_to_agent.my_trainer.chkpt_path
+                self.chkpt_dir = self.chkpt_path.parents[1]
+                
+                shutil.move(os.path.normpath(self.chkpt_dir), self.scenario_dir)
+            
+                self.chkpt_path_ = os.path.join(self.chkpt_path.parents[2], 
+                                           self.fenv_config['scenario_name'], 
+                                           '/'.join(str(self.chkpt_path).split('/')[-3:]))
+                
+                env_data_dir = f"{self.scenario_dir}/env_data"
+                json_file_pathes = [f"{env_data_dir}/{json_name}" for json_name in os.listdir(env_data_dir)]
+                plans_df = json_reader(json_file_pathes)
+                
+                plans_df.to_csv(f"{self.scenario_dir}/plans_df.csv", index=False)
+            
+            elif args.learner_name == 'tunner':
+                self.chkpt_path = Path(self.env_to_agent.my_tunner.chkpt_path)
+                self.chkpt_dir = self.chkpt_path.parents[2]
+                
 
+                env_data_dir = f"{self.chkpt_dir}/env_data"
+                json_file_pathes = [f"{env_data_dir}/{json_name}" for json_name in os.listdir(env_data_dir)]
+                plans_df = json_reader(json_file_pathes)
+                
+                plans_df.to_csv(f"{self.scenario_dir}/plans_df.csv", index=False)
+
+                shutil.move(os.path.normpath(self.chkpt_dir), self.scenario_dir)
+            
+                self.chkpt_path_ = os.path.join(self.chkpt_path.parents[3], 
+                                           self.fenv_config['scenario_name'], 
+                                           '/'.join(str(self.chkpt_path).split('/')[-4:]))
+                
+            
+            with open(self.agent_config['chkpt_txt_fixed_path'], "w") as f:
+                f.write(str(self.chkpt_path_))
+                
+            chkpt_json = {
+                    'scenario_name': self.fenv_config['scenario_name'],
+                    "chkpt_path": str(self.chkpt_path_),
+                    }
+                    
+            # scenario_dir = f"{self.agent_config['local_dir']}/{self.fenv_config['scenario_name']}"
+            chkpt_json_path = os.path.join(self.scenario_dir, "chkpt_json.json")
+            with open(chkpt_json_path, 'w') as f:
+                json.dump(chkpt_json, f, indent=4)
+        
+        
         run_info_json = {
-                'elapsed_time': elapsed_time/60,
+                'elapsed_time (minutes)': elapsed_time/60,
                 'RLLIB_NUM_GPUS': args.RLLIB_NUM_GPUS,
                 'num_iters': args.num_iters,
                 'num_workers': args.num_workers,
         }
-        run_info_json_path = f"{self.scenario_dir}/run_info_json.json"
+        
+        
+        ## Store the current version env for inferencing in the future
+        root_dir = os.path.normpath('/home/rdbt/ETHZ/dbt_python/housing_design_making-general-env')
+        source_env_dir = os.path.join(root_dir, 'gym-floorplan')
+        destination_env_dir = os.path.join(self.scenario_dir, 'gym-floorplan')
+        shutil.copytree(source_env_dir, destination_env_dir)
+        
+        
+        run_info_json_path = os.path.join(self.scenario_dir, 'run_info_json.json')
         with open(run_info_json_path, 'w') as f:
             json.dump(run_info_json, f, indent=4)
+            
+        print(f"- - - - - - Scenario name: {self.fenv_config['scenario_name']}")
+        print(f"- - - - Total time for {self.num_iterations_in_a_run} iterations was: {elapsed_time} (s)")   
+        print(" = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =")
+        
+        
         
         
 # %%
 def main():
     runner = Runner()
     runner.start()
+    return runner
     
     
 # %%
 if __name__ == '__main__':
-    main()
-    
-
+    runner = main()

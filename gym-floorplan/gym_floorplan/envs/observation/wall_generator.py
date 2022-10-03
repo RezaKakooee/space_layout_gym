@@ -18,28 +18,11 @@ class WallGenerator:
 
     def make_walls(self, valid_points_for_sampling, walls_coords=None, wall_name=None):
         if walls_coords is None:
-            if self.fenv_config['load_fixed_walls_sets_flag']:
-                with open(self.fenv_config['fixed_walls_path'], 'rb') as fp:
-                    walls_sets = pickle.load(fp)
-                    a_random_index = np.random.randint(self.fenv_config['number_of_fixed_walls_sets'])
-                    walls_coords = walls_sets[a_random_index]
-                
-            else:   
-                if self.fenv_config['number_of_fixed_walls_sets'] >= 1:
-                    nwalls_sets = {}
-                    for n in range(self.fenv_config['number_of_fixed_walls_sets']):
-                        walls_coords = self._generate_random_wall_coords(valid_points_for_sampling)
-                        walls_coords = self._make_walls_properties(walls_coords)
-                        nwalls_sets.update({n: walls_coords})
-
-                    if self.fenv_config['save_fixed_walls_sets_flag']:
-                        self._store_walls_coords(nwalls_sets)
-                else:
-                    walls_coords = self._generate_random_wall_coords(valid_points_for_sampling)
+            walls_coords = self._generate_random_wall_coords(valid_points_for_sampling)
 
         else:
             if not isinstance(walls_coords, dict):
-                    raise ValueError("-.- wall_generator:2: walls_coords must be dict!")
+                    raise ValueError("in make_walls of wall_generator: walls_coords must be dict!")
             walls_coords = {wall_name: walls_coords} # wall_1 is a temp name
         
         walls_coords = self._make_walls_properties(walls_coords)
@@ -48,11 +31,9 @@ class WallGenerator:
     
     def _make_walls_properties(self, walls_coords):
         for w_name, w_coords in walls_coords.items():
-            # print("fragment_identifier, front")
-            front_ori, front_dir, front_pos = self.fragment_identifier(start_coord=w_coords['anchor_coord'], 
+            front_ori, front_dir, front_pos = self.__fragment_identifier(start_coord=w_coords['anchor_coord'], 
                                                                        end_coord=w_coords['front_open_coord'])
-            # print("fragment_identifier, back")
-            back_ori, back_dir, back_pos = self.fragment_identifier(start_coord=w_coords['anchor_coord'], 
+            back_ori, back_dir, back_pos = self.__fragment_identifier(start_coord=w_coords['anchor_coord'], 
                                                                     end_coord=w_coords['back_open_coord'])
             
             walls_coords[w_name].update({'front_segment': {'orientation': front_ori,
@@ -83,7 +64,6 @@ class WallGenerator:
                     elif direction == 'south':
                         for u in range(1, self.fenv_config['seg_length']):
                             walls_coords[wall_name]['base_coords'].append([ walls_coords[wall_name]['anchor_coord'][0], walls_coords[wall_name]['anchor_coord'][1]-u])
-                        
         
         return walls_coords
         
@@ -106,20 +86,14 @@ class WallGenerator:
         
         walls_coords = {}
         for i, anchor_point in enumerate(anchor_points):
-            if self.fenv_config['only_straight_vertical_walls']:
-                neighborhood_points = [
-                       [anchor_point[0], anchor_point[1]+self.fenv_config['seg_length']],
-                       [anchor_point[0], anchor_point[1]-self.fenv_config['seg_length']]]
-            
-            else:
-                neighborhood_points = [[anchor_point[0]+self.fenv_config['seg_length'], 
-                                                anchor_point[1]],
-                                       [anchor_point[0]-self.fenv_config['seg_length'], 
-                                                anchor_point[1]],
-                                       [anchor_point[0], 
-                                                anchor_point[1]+self.fenv_config['seg_length']],
-                                       [anchor_point[0],
-                                                anchor_point[1]-self.fenv_config['seg_length']]]
+            neighborhood_points = [[anchor_point[0]+self.fenv_config['seg_length'], 
+                                            anchor_point[1]],
+                                   [anchor_point[0]-self.fenv_config['seg_length'], 
+                                            anchor_point[1]],
+                                   [anchor_point[0], 
+                                            anchor_point[1]+self.fenv_config['seg_length']],
+                                   [anchor_point[0],
+                                            anchor_point[1]-self.fenv_config['seg_length']]]
                                    
             n_neighborhood = len(neighborhood_points)
             choices = np.random.choice(range(0,n_neighborhood), 2, replace=False)
@@ -132,7 +106,7 @@ class WallGenerator:
         return walls_coords
             
     
-    def fragment_identifier(self, start_coord=None, end_coord=None):
+    def __fragment_identifier(self, start_coord=None, end_coord=None):
         if (start_coord is None) or (end_coord is None):
             raise ValueError('Input coords cannot be None')
             
@@ -189,15 +163,3 @@ class WallGenerator:
                     direction = 'south_west'
                     
         return orientation, direction, location
-    
-    
-    def _store_walls_coords(self, nwalls_sets):
-        with open(self.fenv_config['fixed_walls_path'], 'wb') as fp:
-            pickle.dump(nwalls_sets, fp, protocol=pickle.HIGHEST_PROTOCOL)
-        
-#%%
-if __name__ == '__main__':
-    from gym_floorplan.envs.fenv_config import LaserWallConfig
-    fenv_config = LaserWallConfig().get_config()
-    walls_coords = WallGenerator(fenv_config=fenv_config).make_walls()
-    

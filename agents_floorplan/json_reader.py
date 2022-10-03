@@ -6,7 +6,11 @@ Created on Tue Nov  9 13:54:11 2021
 """
 # %%
 import os
+import ast
+import copy
+import json
 import pandas as pd
+from collections import defaultdict
 import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.io as pio
@@ -19,6 +23,27 @@ from gif_maker import make_gif
 from gym_floorplan.envs.fenv_config import LaserWallConfig
 
 # %%
+def json_reader(json_file_pathes):
+    exp = defaultdict()
+    for i, json_path in enumerate(json_file_pathes):
+        df = pd.read_json(json_path, lines=True)
+        cols = df.columns
+        for index, row in df.iterrows():
+            for col in cols:
+                val = row[col]
+                if len(val) > 0:
+                    exp[f"worker_{i}_{val['time_step']}"] = val['env_data']
+    
+    exp_dict = {}
+    for key,value in exp.items():
+        if value not in exp_dict.values():
+            exp_dict[key] = value
+    
+    exp_df = pd.DataFrame.from_dict(exp_dict).T
+    
+    return exp_df
+                
+    
 def get_data_from_json(json_path):
     c = 0
     infos_list = []
@@ -76,9 +101,31 @@ def barplot_room_area(areas, i, save_dir):
 # %%
 if __name__ == "__main__":
     fenv_config = LaserWallConfig().get_config()
-    json_path = "/home/rdbt/ETHZ/dbt_python/housing_design_making-general-env/agents_floorplan/storage/trainer/local_dir/Scenario__DOLW__Masked_CRC__10_Walls__Area__FC__2022_06_05_0209/env_data/output-2022-06-05_02-09-37_worker-1_0.json"
-    infos_list, dones_list = get_data_from_json(json_path)
+    storage_dir = fenv_config['storage_dir']
+    scenario_name = 'Scenario__DOLW__Masked_FTC__09_Rooms__LRres__Area__Adj__METAFC__2022_09_27_2325'
+    scenario_dir = f"{storage_dir}/tunner/local_dir/{scenario_name}"
+    agent_folder = [ name for name in os.listdir(scenario_dir) if os.path.isdir(os.path.join(scenario_dir, name)) ][0]
+    env_data_dir = f"{scenario_dir}/{agent_folder}/env_data" 
+    json_file_pathes = [f"{env_data_dir}/{json_name}" for json_name in os.listdir(env_data_dir)]
     
+    
+    exp_df = json_reader(json_file_pathes)
+    
+    optim_exp_df_path = f"{scenario_dir}/optim_exp_df_{scenario_name}.csv"
+    exp_df.to_csv(optim_exp_df_path, index=False)
+    
+    
+    selected_cols = ['n_rooms', 'mask_numbers', 'masked_corners',
+       'mask_lengths', 'mask_widths', 'desired_areas', 'desired_edge_list']
+    
+    df = copy.deepcopy(exp_df)
+    df = df[selected_cols]
+    
+    for col in df.columns:
+        df[col] = df[col].astype(str)#.drop_duplicates().to_frame()
+        
+    df_ = df.drop_duplicates()
+
     # areas_df = pd.DataFrame(infos_list)
     # scatter_room_area(areas_df, save_dir=fenv_config['area_plots_dir'])
     

@@ -16,7 +16,7 @@ root_dir = os.path.realpath(Path(os.getcwd()).parents[0])
 # %%
 class AgentConfig:
     def __init__(self):
-        ####### Parameters and Hyper-parameters
+        ## Parameters and Hyper-parameters
         self.num_iters = 1
         self.num_episodes = 1
 
@@ -41,22 +41,22 @@ class AgentConfig:
         self.default_metric = 'episode_reward_mean'
         self.default_mode = 'max'
 
-        self.custom_model_flag = True
+        self.model_source = 'RllibBase'
 
         self.framework = 'torch'
 
-        self.save_env_data_flag = False
+        self.save_env_data_flag = True
 
-        ####### Directories and Pathsl
+        ## Directories and Pathsl
         self.housing_design_dir = root_dir
         self.agents_floorplan_dir = f"{self.housing_design_dir}/agents_floorplan"
 
         # self.wandb_api_key_file_path = f"{self.agents_floorplan_dir}/wandb_api_key_file.txt"
 
-        ##### Storage
+        ## Storage
         self.storage = f"{self.agents_floorplan_dir}/storage"
 
-        ### chkpt_dir and path
+        ## chkpt_dir and path
         self.chkpt_dir = f"{self.storage}/chkpt_dir"
         if not os.path.exists(self.chkpt_dir):
             os.makedirs(self.chkpt_dir)

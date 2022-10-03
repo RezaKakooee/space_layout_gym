@@ -2,7 +2,7 @@
 """
 Created on Sun Sep 12 09:47:49 2021
 
-@author: RK
+@author: Reza Kakooee
 """
 
 # from ray.rllib.agents.ppo import PPOTrainer, PPOTFPolicy, PPOTorchPolicy

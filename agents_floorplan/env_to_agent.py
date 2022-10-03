@@ -13,10 +13,6 @@ import ray
 import gym
 
 # %% ENV # if custom
-from gym_floorplan.envs.sp_env import SPEnv
-from gym_floorplan.envs.asp_env import ASPEnv
-# from gym_floorplan.envs.single_lw_env import SingleLWEnv
-# from gym_floorplan.envs.single_dolw_env import SingleDOLWEnv
 from gym_floorplan.envs.master_env import MasterEnv
 
 
@@ -26,12 +22,28 @@ from gym_floorplan.envs.master_env import MasterEnv
 # import supersuit as ss
 
 # %% AGENT
-from my_tunner import MyTunner
-from my_trainer import MyTrainer
-# from my_callbacks import MyCallbacks
+from tunner import MyTunner
+from trainner import MyTrainer
+# from callbacks import MyCallbacks
 
 from ray.rllib.models import ModelCatalog
-from my_model import CnnFcModel, FcCnnModel, CnnModel, CNNModelV2
+from model import (SimpleFc, 
+                   SimpleCnn, 
+                   SimpleFcCnn, 
+                   SimpleActionMaskFc, 
+                
+                   MySimpleFc, 
+                   MySimpleCnnGcn, # this is a FC model
+                   MySimpleCnn,
+                   MySimpleConv, # for testing high resolution
+                   MySimpleFcCnn,
+                   MySimpleGnnCnn,
+                   MySimpleActionMaskFc,
+                   MySimpleActionMaskCnnGcn,
+                   
+                   MySimpleMetaFc,
+                   MySimpleActionMaskMetaFc,
+                )
 
 
 # %%
@@ -42,19 +54,6 @@ class EnvToAgent:
             self.env = gym.make(self.env_name)
             self.env.env_name = self.env_name
 
-        # elif fenv_config['env_name'] == 'pistonball_v4': # petting_zoo env
-        #     self.env_name = fenv_config['env_name']
-
-        #     ### for tunner
-        #     self._register_my_env(env_name=self.env_name, env_config=fenv_config)
-
-        #     ### for trainer
-        #     self.env = self._pt_env_creator(
-        #         env_config=fenv_config)  # self._env_creator(env_config={'env_name': self.env_name})
-
-        #     if agent_config['custom_model_flag']:
-        #         self._register_my_model()
-
         else: # Custom env
             self.env_name = fenv_config['env_name']
             
@@ -64,7 +63,7 @@ class EnvToAgent:
             ### for trainer
             self.env = self._env_creator(env_config=fenv_config) #self._env_creator(env_config={'env_name': self.env_name})
             
-            if agent_config['custom_model_flag']:
+            if agent_config['model_source'] in ['RllibCustomModel', 'MyCustomModel']:
                 self._register_my_model()
                 
                 
@@ -73,15 +72,6 @@ class EnvToAgent:
         
         
     def _register_my_env(self, env_name: str = 'master_env-v0', env_config={}):
-        # ray.tune.register_env(env_name, self._env_creator)
-        # if env_name == "sp_env-v0":
-        #     ray.tune.register_env(env_name, lambda config: SPEnv(env_config))
-        # elif env_name == "asp_env-v0":
-        #     ray.tune.register_env(env_name, lambda config: ASPEnv(env_config))
-        # elif env_name == "single_lw_env-v0":
-        #     ray.tune.register_env(env_name, lambda config: SingleLWEnv(env_config))
-        # elif env_name == "single_dolw_env-v0":
-        #     ray.tune.register_env(env_name, lambda config: SingleDOLWEnv(env_config))
         if env_name == "master_env-v0":
             ray.tune.register_env(env_name, lambda config: MasterEnv(env_config))
         # elif env_name == "pistonball_v4":
@@ -89,14 +79,6 @@ class EnvToAgent:
 
 
     def _env_creator(self, env_config):
-        # if self.env_name == 'sp_env-v0':
-        #     return SPEnv(env_config)
-        # elif self.env_name == 'asp_env-v0':
-        #     return ASPEnv(env_config)
-        # elif self.env_name == 'single_lw_env-v0':
-        #     return SingleLWEnv(env_config)
-        # elif self.env_name == 'single_dolw_env-v0':
-        #     return SingleDOLWEnv(env_config)
         if self.env_name == 'master_env-v0':
             return MasterEnv(env_config)
         
@@ -113,10 +95,22 @@ class EnvToAgent:
     #     return env
 
     def _register_my_model(self):
-        # ModelCatalog.register_custom_model("cnn_model", CnnModel)
-        ModelCatalog.register_custom_model("cnnfc_model", CnnFcModel)
-        ModelCatalog.register_custom_model("fccnn_model", FcCnnModel)
-        # ModelCatalog.register_custom_model("CNNModelV2", CNNModelV2)
+        ModelCatalog.register_custom_model("SimpleFc", SimpleFc)
+        ModelCatalog.register_custom_model('SimpleCnn', SimpleCnn)
+        ModelCatalog.register_custom_model("SimpleFcCnn", SimpleFcCnn)
+        
+        ModelCatalog.register_custom_model("MySimpleMetaFc", MySimpleMetaFc)
+        ModelCatalog.register_custom_model("SimpleActionMaskFc", SimpleActionMaskFc)
+        
+        ModelCatalog.register_custom_model('MySimpleFc', MySimpleFc)
+        ModelCatalog.register_custom_model('MySimpleCnnGcn', MySimpleCnnGcn)
+        ModelCatalog.register_custom_model('MySimpleCnn', MySimpleCnn)
+        ModelCatalog.register_custom_model('MySimpleConv', MySimpleConv)
+        ModelCatalog.register_custom_model('MySimpleFcCnn', MySimpleFcCnn)
+        ModelCatalog.register_custom_model('MySimpleGnnCnn', MySimpleGnnCnn)
+        ModelCatalog.register_custom_model('MySimpleActionMaskFc', MySimpleActionMaskFc)
+        ModelCatalog.register_custom_model('MySimpleActionMaskCnnGcn', MySimpleActionMaskCnnGcn)
+        ModelCatalog.register_custom_model('MySimpleActionMaskMetaFc', MySimpleActionMaskMetaFc)
     
     
     def _run_the_tunner(self):
@@ -133,5 +127,7 @@ class EnvToAgent:
     def learn(self):
         if self.learner_name == "tunner":
             self._run_the_tunner()
-        else:
+        elif self.learner_name == 'trainer':
             self._run_the_trainer()        
+        else:
+            raise ValueError("env_to_agent: Unvalid learner name")

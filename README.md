@@ -10,7 +10,7 @@ We publicly share the environment to encourage both RL and ARCH communities to u
 
 ## About this repository
 
-The repository consists of two main directories. The fist one is `gym-floorplan` in which there are all scripts that developes the SLP environment. And the second one is `agens-floorplan` that includes all scrips that uses `RLlib` for training PPO algorithm.
+The repository consists of two main directories. The first one is `gym-floorplan` in which there are all scripts that developes the SLP environment. And the second one is `agens-floorplan` that includes all scrips that uses `RLlib` for training PPO algorithm.
 
 The RLlib pipeline that we implemented almost contains a diverse set of modules one might need to train an RL agent. We refer the readers to the codes for more information.
 
@@ -23,16 +23,6 @@ Like other Gym custom environment, the RLDesigner environment can be easily inst
 ## Note:
 This repository is only the public version of underdeveloping RLDesigner environment which is currently a private repository but will be public in the near future. As soon as we make it public, the new link will be shared here! In case you need access to the latest version, please feel free to contact the first author. 
 
-## Citing RlDesigner
-
-```bibtex
-@article{kakooee2022rldesigner,
-  title={RLDesigner: Toward Framing Spatial Layout Planning as a Markov Decision Process},
-  author={Kakooee, Reza and Dillenburger, Benjamin},
-  journal={The 15th European Workshop on Reinforcement Learning (EWRL 2022)},
-  year={2022}
-}
-```
 
 
 

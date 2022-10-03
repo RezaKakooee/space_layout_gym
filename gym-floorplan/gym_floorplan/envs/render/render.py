@@ -17,15 +17,25 @@ class Render(BaseRender):
         super().__init__()
         self.fenv_config = fenv_config
 
-    # @property
+
     def render(self, plan_data_dict, episode, time_step):
-        visutils.show_plan(plan_data_dict, episode, time_step,
+        visutils.render_plan(plan_data_dict, episode, time_step,
                            fenv_config=self.fenv_config)
 
-    def show_segmentation_map(self, plan_data_dict, episode, time_step):
+
+    def display(self, plan_data_dict, episode, time_step):
         rextractor = RoomExtractor(fenv_config=self.fenv_config)
         obs_mat, labels = rextractor._get_segmentation_map(plan_data_dict['obs_mat'])
-        visutils.show_env(obs_mat, labels, episode, time_step, fenv_config=self.fenv_config)
+        
+        visutils.display_env(obs_mat, labels, episode, time_step, 
+                          fenv_config=self.fenv_config)
 
-    def show_obs_arr_conv(self, obs_conv_arr, episode, time_step):
-        visutils.show_obs_arr_conv(obs_conv_arr, episode, time_step, fenv_config=self.fenv_config)
+
+    def illustrate(self, obs_conv_arr, episode, time_step):
+        visutils.illustrate_obs_arr_conv(obs_conv_arr, episode, time_step, 
+                                   fenv_config=self.fenv_config)
+    
+    
+    def demonestrate(self, plan_data_dict, episode, time_step):
+        visutils.demonestrate_rooms_with_walls(plan_data_dict, episode, time_step,
+                                       fenv_config=self.fenv_config)
