@@ -17,7 +17,7 @@ from torch import nn
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.rllib.models.torch.fcnet import FullyConnectedNetwork as TorchFC
 from ray.rllib.models.torch.visionnet import VisionNetwork as TorchVis
-from ray.rllib.utils.torch_ops import FLOAT_MIN
+from ray.rllib.utils.torch_utils import FLOAT_MIN
 
 from gym_floorplan.envs.fenv_config import LaserWallConfig
 fenv_config = LaserWallConfig().get_config()

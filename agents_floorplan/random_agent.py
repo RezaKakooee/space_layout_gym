@@ -424,7 +424,7 @@ if __name__ == '__main__':
         'trial': tr,
         'n_episodes': args.n_episodes,
         
-        'fixed_action_seq_flag': True,
+        'fixed_action_seq_flag': False,
         'action_sequence': [997, 178, 1085, 1355, 867, 1406, 1423],#[597, 1170, 308, 689, 129, 705, 147],
         
         'save_log_flag': False,
@@ -442,14 +442,14 @@ if __name__ == '__main__':
         }
         
         params.update({
-            'plan_config_source_name': 'fixed_test_config' , # 'create_random_config', fixed_test_config, load_random_config
+            'plan_config_source_name': 'create_random_config' , # 'create_random_config', fixed_test_config, load_random_config
             'is_adjacency_considered': True,
             'net_arch': 'Fc',
             'rewarding_method_name': 'OnlyFinalRewardSimple',
         })
         
         
-        if fenv_config['plan_config_source_name'] == 'oflline_mode':
+        if fenv_config['plan_config_source_name'] == 'create_random_config':
             raise ValueError("For random_agent, the value of plan_config_source_name cannot be oflline_mode")
             
         params.update({'stop_time_step': 2000 if params['plan_config_source_name'] == 'create_random_config' else fenv_config['stop_time_step']})

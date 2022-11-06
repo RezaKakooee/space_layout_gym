@@ -20,7 +20,7 @@ from ray.rllib.agents import ppo
 from ray.rllib.agents import sac
 from ray.rllib.agents.ppo.ppo import PPOTrainer
 from ray.rllib.agents.dqn.dqn import DQNTrainer
-from ray.rllib.agents.sac.sac import SACTrainer
+# from ray.rllib.agents.sac.sac import SACTrainer
 
 from ray.tune.suggest.bayesopt import BayesOptSearch
 # from hebo.optimizers.hebo import HEBO
@@ -45,9 +45,9 @@ class MyTunner:
         elif self.agent_config['agent_first_name'] == 'dqn':
             self.default_config = dqn.DEFAULT_CONFIG.copy()
             self.agent = DQNTrainer
-        elif self.agent_config['agent_first_name'] == 'sac':
-            self.default_config = sac.DEFAULT_CONFIG.copy()
-            self.agent = SACTrainer
+        # elif self.agent_config['agent_first_name'] == 'sac':
+        #     self.default_config = sac.DEFAULT_CONFIG.copy()
+        #     self.agent = SACTrainer
 
         self.config = self._get_tunner_config(self.default_config)
 

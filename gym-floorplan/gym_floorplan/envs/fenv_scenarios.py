@@ -53,7 +53,7 @@ class FEnvScenarios:
         self.mask_flag = True
         
         ### Plan generation method and room/wall count
-        self.plan_config_source_name = 'offline_mode'  # fixed_test_config  create_random_config   offline_mode   inference_mode load_random_config
+        self.plan_config_source_name = 'fixed_test_config'  # fixed_test_config  create_random_config   offline_mode   inference_mode load_random_config
         self.room_set_cardinality = 'Fixed' if self.plan_config_source_name == 'fixed_test_config' else 'X'
         
         self.nrows_of_env_data_csv = None #650 None

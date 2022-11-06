@@ -20,7 +20,7 @@ from ray.rllib.agents import ppo
 from ray.rllib.agents import sac
 from ray.rllib.agents.ppo.ppo import PPOTrainer
 from ray.rllib.agents.dqn.dqn import DQNTrainer
-from ray.rllib.agents.sac.sac import SACTrainer
+# from ray.rllib.agents.sac.sac import SACTrainer
 
 from ray.tune.suggest.bayesopt import BayesOptSearch
 # from hebo.optimizers.hebo import HEBO
@@ -51,8 +51,8 @@ class MyTrainer:
             self.agent = PPOTrainer(env=self.env_name, config=self.config)
         elif self.agent_config['agent_first_name'] == 'dqn':
             self.agent = DQNTrainer(env=self.env_name, config=self.config)
-        elif self.agent_config['agent_first_name'] == 'sac':
-            self.agent = SACTrainer(env=self.env_name, config=self.config)
+        # elif self.agent_config['agent_first_name'] == 'sac':
+        #     self.agent = SACTrainer(env=self.env_name, config=self.config)
 
         self.search_alg = None
         if self.agent_config['hyper_tune_flag']:

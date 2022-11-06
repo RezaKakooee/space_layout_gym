@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(description='Process some parameters.')
 parser.add_argument('--env_name', type=str, default='master_env-v0', help='Custom env flag') # pistonball_v4
 
 parser.add_argument('--num_iters',       type=int, default=1, help='Num iterations for tunner')
-parser.add_argument('--num_episodes',    type=int, default=2, help='Num episodes for trainer')
+parser.add_argument('--num_episodes',    type=int, default=1, help='Num episodes for trainer')
 parser.add_argument('--RLLIB_NUM_GPUS',  type=int, default=0, help='Number of GPUs')
 parser.add_argument('--num_workers',     type=int, default=1, help='Number of Workers')
 parser.add_argument('--local_mode_flag', type=int, default=1, help='set the local mode')
@@ -239,7 +239,7 @@ class Runner:
         
         
         ## Store the current version env for inferencing in the future
-        root_dir = os.path.normpath('/home/rdbt/ETHZ/dbt_python/housing_design_making-general-env')
+        root_dir = os.path.normpath('/home/rdbt/ETHZ/dbt_python/housing_design')
         source_env_dir = os.path.join(root_dir, 'gym-floorplan')
         destination_env_dir = os.path.join(self.scenario_dir, 'gym-floorplan')
         shutil.copytree(source_env_dir, destination_env_dir)
