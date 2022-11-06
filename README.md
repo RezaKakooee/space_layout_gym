@@ -23,6 +23,19 @@ Like other Gym custom environment, the RLDesigner environment can be easily inst
 ## Note:
 This repository is only the public version of underdeveloping RLDesigner environment which is currently a private repository but will be public in the near future. As soon as we make it public, the new link will be shared here! In case you need access to the latest version, please feel free to contact the first author. 
 
+## Citing RLDesigner
+
+If you use these codes for your research, please cite our paper as follows:
+
+```bibtex
+@article{kakooee2022rldesigner,
+  title={Design Process is a Reinforcement Learning Problem},
+  author={Kakooee, Reza and Dillenburger, Benjamin},
+  journal={Deep Reinforcement Learning Workshop, NeurIPS 2022}},
+  year={2022}
+}
+```
+
 
 
 
