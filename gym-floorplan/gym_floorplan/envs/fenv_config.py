@@ -5,79 +5,226 @@ Created on Wed Jun 30 00:58:16 2021
 @author: Reza Kakooee
 """
 
+
 # %%
 import os
 from pathlib import Path
 
-agent_dir = os.path.join(os.path.realpath(Path(os.getcwd()).parents[2]), 'agents_floorplan') \
-    if __name__ == "__main__" else os.path.realpath(Path(os.getcwd()))
+# agent_dir = os.path.join(os.path.realpath(Path(os.getcwd()).parents[2]), 'agents_floorplan') \
+#     if __name__ == "__main__" else os.path.realpath(Path(os.getcwd()))
 
-
+root_dir = os.path.realpath(Path(os.getcwd()).parents[2]) if __name__ == "__main__" else os.path.realpath(Path(os.getcwd()).parents[0])
+# root_dir = os.path.normpath("/home/rdbt/ETHZ/dbt_python/housing_design_making-general-env/")
 
 
 # %%
+# import ast
 import numpy as np
-import pandas as pd
+# import pandas as pd
 from gym_floorplan.envs.fenv_scenarios import FEnvScenarios
+
+
 
 
 # %%
 class LaserWallConfig:
-    def __init__(self):
+    def __init__(self, agent_name='PPO', phase='train', scenarios_dict=None):
+        
+        ### Env info
+        self.env_name = 'DOLW-v0' 
+        self.env_type = 'Single'
+        self.env_planning = 'One_Shot'
+        self.env_space = self.action_space_type = 'Discrete'
+        self.mask_flag = True
+        
+        self.save_env_info_on_callback = False
+        
+        
         ## Get the scenario config and update fenv_config
-        scenarios_dict = FEnvScenarios().get_scenarios()
+        if scenarios_dict is None: scenarios_dict = FEnvScenarios().get_scenarios()
         for k, v in scenarios_dict.items():
             setattr(self, k, v)
+            
         
-        self.custom_model_flag = True if self.net_arch in ['fccnn', 'cnnfc'] else False
-        self.load_valid_plans_flag = True if self.plan_config_source_name in ['load_fixed_config', 'load_random_config'] else False
+        ## Reward
+        self.positive_final_reward = 1000 # self.stop_ep_time_step
+        self.positive_done_reward = 100 # 0.1*self.stop_ep_time_step
+        self.negative_badly_stop_reward = -200 # -0.2 * self.stop_ep_time_step
         
-        if self.fixed_fc_observation_space:
-            self.num_of_fixed_walls_for_masked = 14
+        self.weight_for_entrance_edge_diff_in_reward = 1
+        self.weight_for_missing_corridor_living_room_connection = 10
         
-        self.nrows_of_env_data_csv = 650
-        self.stop_time_step = 1000
+        self.last_good_reward_scalar = 1 # I hope this could help to prioritize adjacency over episode_len
+        self.last_good_reward_threshold = 500
+        self.last_good_reward_high_coeff = 3
+        self.last_good_reward_low_val = 100
         
-        self.min_desired_proportion = 0.5
-        self.max_desired_proportion = 2
-        self.area_tolerance = 0
-        self.positive_done_reward = 10
-        self.positive_action_reward = 1
-        self.negative_action_reward = -1
-        self.negative_wrong_area_reward = -1
-        self.negative_rejected_by_room_reward = -1
-        self.negative_rejected_by_canvas_reward = -1
-        if self.reward_shaping_flag:
-            self.positive_done_reward = 50
-            self.positive_action_reward = 10
-            self.area_tolerance = 4
-
-        self.save_last_walls_falg = False
-        self.shuffle_walls_sequence = False
-        self.wall_correction_method = 'sequential'
+        
+        ## Constraints
+        self.area_tolerance = 15 if self.resolution == 'Low' else 20
+        
+        self.n_facades_blocked = 1
+        
+        # self.min_desired_proportion = 0.5
+        # self.max_desired_proportion = 5
+        self.desired_aspect_ratio = 1
+        self.aspect_ratios_tolerance = 4
+            
+        
+        ## Objective
+        self.area_diff_in_reward_flag = False #True if self.is_area_considered else False
+        self.proportion_diff_in_reward_flag = False #True if self.is_proportion_considered else False  
+        
+        self.edge_diff_min = 0
+        self.edge_diff_max = 30 if 'Smooth' in self.rewarding_method_name else 20
+        
+        self.linear_reward_coeff = 50
+        self.quad_reward_coeff = 2.49
+        self.exp_reward_coeff = 50
+        self.exp_reward_temperature = 144.7
+        
+        
+        ## Plan components
+        self.maximum_num_masked_rooms = 4
+        self.num_of_facades = 4
+        self.num_entrance = 1
+        self.maximum_num_real_rooms = 9 
+        self.maximum_num_real_plus_masked_rooms = self.maximum_num_masked_rooms + self.maximum_num_real_rooms
+        self.num_plan_components = self.maximum_num_real_plus_masked_rooms + self.num_of_facades + self.num_entrance
+        
+        
+        # self.facade_id_min_threshold = self.maximum_num_real_plus_masked_rooms + 1 # = 14
+        
+        self.very_corner_cell_id = 1
+        self.min_fake_room_id = 2
+        self.max_fake_room_id = 5
+        self.fake_room_id_range = list(range(self.min_fake_room_id, self.max_fake_room_id+1))
+        
+        self.north_facade_id = self.min_facade_id = 6
+        self.south_facade_id = 7
+        self.east_facade_id = 8
+        self.west_facade_id = self.max_facade_id = 9
+        self.facade_id_range = list(range(self.min_facade_id, self.max_facade_id+1))
+        
+        self.entrance_cell_id = 10
+        
+        self.min_room_id = 11
+        self.max_room_id = self.min_room_id + self.maximum_num_real_rooms - 1
+        self.real_room_id_range = list(range(self.min_room_id, self.max_room_id+1))
+        
+        self.cell_id_max = self.max_room_id + 1
+        
+        self.num_nodes = self.max_room_id - 1
+        
+        self.facade_id_to_name_dict = {self.north_facade_id: 'n',
+                                       self.south_facade_id: 's',
+                                       self.east_facade_id: 'e',
+                                       self.west_facade_id: 'w'}
+        self.facade_name_to_id_dict = {'n': self.north_facade_id,
+                                       's': self.south_facade_id,
+                                       'e': self.east_facade_id,
+                                       'w': self.west_facade_id}
+        
+        self.number_of_walls_range = list(range(3, 9))
+        self.number_of_rooms_range = list(range(4, 10))
+        
+        # self.wall_alphabetic = [f"wall_{chr(i)}" for i in range(ord('A'), ord('A')+self.cell_id_max)]
+        # self.wall_numeric = [f"wall_{i}" for i in range(1, self.cell_id_max)]
+        
+        # self.waroom_alphabetic = [f"waroom_{chr(i)}" for i in range(ord('A'), ord('A')+self.cell_id_max)]
+        # self.waroom_numeric = [f"waroom_{i}" for i in range(1, self.cell_id_max)]
+        
+        # self.room_alphabetic = [f"room_{chr(i)}" for i in range(ord('A'), ord('A')+self.cell_id_max)]
+        # self.room_numeric = [f"room_{i}" for i in range(1, self.maximum_num_real_plus_masked_rooms+1)]
+        
+        self.room_desired_area_dict_template = {f'room_{i}':0 for i in range(self.min_fake_room_id, self.cell_id_max)}
+        self.room_achieved_area_dict_template = {f'room_{i}':0 for i in range(self.min_fake_room_id, self.cell_id_max)}
+        self.room_delta_area_dict_template = {f'room_{i}':0 for i in range(self.min_fake_room_id, self.cell_id_max)}
+        
+        self.wall_important_points_names = ['start_of_wall', 'before_anchor', 'anchor', 'after_anchor', 'end_of_wall']
+        self.wall_coords_template = {k: [-1, -1] for k in self.wall_important_points_names}
+        
+        self.treat_facade_as_wall = True
+        
+        
+        ## Render
         self.show_render_flag = False
+        self.so_thick_flag = False
+        self.show_graph_on_plan_flag = False
+        self.graph_line_style = 'hanging' # bezier hanging stright
+        self.show_room_dots_flag = False
         self.save_render_flag = False
-        self.fenv_config_verbose = 0
-        self.save_valid_plans_flag = True
-        self.only_straight_vertical_walls = False
-        self.number_of_fixed_walls_sets = False
-        self.generate_fixed_walls_sets_flag = False
-        self.save_fixed_walls_sets_flag = False
-        self.load_fixed_walls_sets_flag = False
+        self.show_edges_for_fake_rooms_flag = False
+        
+        self.learn_room_size_category_order_flag = True
+        
+        self.random_agent_flag = False
+        
+        self.phase = phase
 
+        
+        ## Observation 
+        ## TODO how the agent knows that what is the corriror and what is the living room id? we need to embed it in the observation for generalization - Done!
+        # self.len_state_vec_for_walls = 4465 # 4465 # 2340
+        # self.len_state_vec_for_rooms = (self.num_plan_components + 0) * 3 #self.maximum_num_real_plus_masked_rooms * 3 # = 57 # 39
+        # self.len_state_vec_for_walls_rooms = self.len_state_vec_for_walls + self.len_state_vec_for_rooms # = 4522 # 2389
+        # self.len_state_vec_for_edges = (self.num_plan_components + 0)**2 # 361 #289
+        # self.len_state_vec = self.len_state_vec_for_walls_rooms + self.len_state_vec_for_edges # = 4883 # 2678
+        self.len_feature_state_vec = 4465
+        # self.len_plan_state_vec = self.maximum_num_masked_rooms + self.num_of_facades * 2 + self.maximum_num_real_rooms * 2 + self.maximum_num_masked_rooms * 2 + 8 * 1 # the last 8 refers to the num of elements in entrance_coords
+        self.len_plan_state_vec_one_hot = self.maximum_num_masked_rooms + self.num_of_facades * 2 + self.maximum_num_real_rooms * 3
+        self.len_plan_state_vec_continous =  + self.maximum_num_masked_rooms * 2 + 8 * 1 # the last 8 refers to the num of elements in entrance_coords
+        self.len_plan_state_vec = self.len_plan_state_vec_one_hot + self.len_plan_state_vec_continous
+        self.len_area_state_vec = self.num_plan_components * 2
+        self.len_proportion_state_vec = self.maximum_num_real_rooms * 2
+        self.len_adjacency_state_vec = np.sum(list(range(1, self.maximum_num_real_rooms))) * 2 + self.maximum_num_real_rooms
+        
+        self.len_meta_state_vec = self.len_plan_state_vec + self.len_area_state_vec + self.len_proportion_state_vec + self.len_adjacency_state_vec
+        
+        self.len_feature_plan_state_vec = self.len_feature_state_vec + self.len_plan_state_vec
+        self.len_feature_plan_area_state_vec = self.len_feature_plan_state_vec + self.len_area_state_vec
+        self.len_feature_plan_area_prop_state_vec = self.len_feature_plan_area_state_vec + self.len_proportion_state_vec
+        
+        self.len_plan_area_state_vec = self.len_plan_state_vec + self.len_area_state_vec
+        self.len_plan_area_prop_state_vec = self.len_plan_area_state_vec + self.len_proportion_state_vec
+        self.len_plan_area_prop_adjacency_state_vec = self.len_plan_area_state_vec + self.len_proportion_state_vec + self.len_adjacency_state_vec
+        
+        self.len_state_vec = self.len_feature_plan_area_prop_state_vec + self.len_adjacency_state_vec # = 4672
+        
+
+        ## normalization factor
+        self.plan_normalizer_factor = 1 / self.cell_id_max # it should be indeed max_x. even better to have two separate factors for length/width and coordinates
+        self.wall_normalizer_factor = 1 / self.cell_id_max
+        self.room_normalizer_factor = 1/self.cell_id_max
+        self.cnn_obs_normalization_factor = 1 / self.cell_id_max
+        self.proportion_normalizer_factor = 1. / self.aspect_ratios_tolerance
+        
+        
         ##### data model
         ## Plan data
         self.min_x = 0
-        self.max_x = 20
+        self.max_x = 22
         self.min_y = 0
-        self.max_y = 20
-        if 'High_Resolution_Plan' in self.scenario_name:
-            self.max_x = 100
-            self.max_y = 100
+        self.max_y = 22
+        if self.resolution == 'High':
+            self.max_x = 44
+            self.max_y = 44
             
-        self.n_channels = 1
+        self.plan_center_coords = [self.max_x//2, self.max_y//2]
+        self.plan_center_positions = [self.max_x//2, self.max_y//2]
+        self.wall_1_included = True
+        self.wall_1 = {'wall_1': {
+            'start_of_wall': [self.min_x, self.min_y],
+            'before_anchor': [self.min_x, self.max_y],
+            'anchor':  [self.max_x//2, self.max_y//2],
+            'after_anchor': [self.max_x, self.min_y],
+            'end_of_wall':  [self.max_x, self.max_y],
+            }}
+        
         self.scaling_factor = 1
-
+        self.seg_length = 2
+        
+        ## coords info
         self.corners = {'corner_00': [self.min_x, self.min_y],
                         'corner_01': [self.min_x, self.max_y],
                         'corner_10': [self.max_x, self.max_y],
@@ -86,12 +233,42 @@ class LaserWallConfig:
         self.n_rows = self.max_y + 1
         self.n_cols = self.max_x + 1
         
-        self.total_area = self.n_rows * self.n_cols
+        self.north_anchor_coord = [self.max_x//2, self.max_y]
+        self.south_anchor_coord = [self.max_x//2, self.min_y]
+        self.east_anchor_coord = [self.max_x, self.max_y//2]
+        self.west_anchor_coord = [self.min_x, self.max_y//2]
+        self.outline_walls_coords = {f"wall_{self.north_facade_id}": {'anchor_coord': self.north_anchor_coord,
+                                                                      'back_open_coord': [self.north_anchor_coord[0]-1, self.north_anchor_coord[1]],
+                                                                      'front_open_coord': [self.north_anchor_coord[0]+1, self.north_anchor_coord[1]]},
+                                     f"wall_{self.south_facade_id}": {'anchor_coord': self.south_anchor_coord,
+                                                                      'back_open_coord': [self.south_anchor_coord[0]-1, self.south_anchor_coord[1]],
+                                                                      'front_open_coord': [self.south_anchor_coord[0]+1, self.south_anchor_coord[1]]},
+                                     f"wall_{self.east_facade_id}": {'anchor_coord': self.east_anchor_coord,
+                                                                      'back_open_coord': [self.east_anchor_coord[0], self.east_anchor_coord[1]-1],
+                                                                      'front_open_coord': [self.east_anchor_coord[0], self.east_anchor_coord[1]+1]},
+                                     f"wall_{self.west_facade_id}": {'anchor_coord': self.west_anchor_coord,
+                                                                      'back_open_coord': [self.west_anchor_coord[0], self.west_anchor_coord[1]-1],
+                                                                      'front_open_coord': [self.west_anchor_coord[0], self.west_anchor_coord[1]+1]},
+                                     }
         
-        self.seg_length = 2
+        offset = 4
+        self.facade_coords = {'room_n': [self.max_x/2, self.max_y+offset], 'room_s': [self.max_x/2, self.min_y-offset], 
+                              'room_e': [self.max_x+offset, self.max_y/2], 'room_w': [self.min_x-offset, self.max_y/2]}
+        
+        self.total_area = (self.n_rows - 2) * (self.n_cols - 2)
+        self.entrance_area = 0
         
         self.wall_pixel_value = 10
         self.mask_pixel_value = -100
+        
+        
+        ### Some obs config
+        self.include_wall_in_area_flag = True
+        self.use_areas_info_into_observation_flag = True
+        self.use_edge_info_into_observation_flag = True
+        
+        self.n_shuffles_for_data_augmentation = 0 # TODO: set it to zero to avoid data augmentation.
+        
         
         ### Actions
         self.action_dict = {
@@ -118,15 +295,8 @@ class LaserWallConfig:
             20: 'cut_back_seg',
         }
 
-        if self.only_straight_vertical_walls:
-            self.action_dict = {
-                0: 'move_right',
-                1: 'move_left',
-                2: 'no_action',
-            }
-            
         if self.env_planning == 'One_Shot':
-            self.wall_set = [
+            self.wall_lib = [
                 [[ 1, 0], [ 0, 0], [ 0, 1]],
                 [[ 0, 1], [ 0, 0], [-1, 0]],
                 [[-1, 0], [ 0, 0], [ 0,-1]],
@@ -135,29 +305,30 @@ class LaserWallConfig:
                 [[-1, 0], [ 0, 0], [ 1, 0]],
                 [[ 0,-1], [ 0, 0], [ 0, 1]],
                 ]
-            self.n_actions = len(self.wall_set) * (self.max_x-2) * (self.max_y-2)
+            
+            self.wall_type = {0: 'angeled', 1: 'angeled', 2: 'angeled', 3: 'angeled',
+                              4: 'horizental', 5: 'vertical'}
+            
+            self.room_size_category = {0: 'large', 
+                                       1: 'medium',
+                                       2: 'small'}
             
             self.action_to_acts_tuple_dic = {}
-            self.acts_tuple_to_action_dic = {}
+            # self.acts_tuple_to_action_dic = {}
             a = 0
-            for i in range(len(self.wall_set)):
-                for j in range(1, self.max_x-1):
-                    for k in range(1, self.max_y-1):
-                        self.action_to_acts_tuple_dic.update({a: (i, j, k)})
-                        self.acts_tuple_to_action_dic.update({(i, j, k): a})
-                        a += 1
-        else:
-            self.n_actions = self.n_walls * len(self.action_dict)
-
-            self.action_to_acts_tuple_dic = {}
-            self.acts_tuple_to_action_dic = {}
-            a = 0
-            for i in range(self.n_walls):
-                for j in range(len(self.action_dict)):
-                    self.action_to_acts_tuple_dic.update({a: (i, j)})
-                    self.acts_tuple_to_action_dic.update({(i, j): a})
-                    a += 1
-
+            for c in range(len(self.room_size_category)):
+                for i in range(len(self.wall_lib)):
+                    for j in range(2, self.max_x-1, 2):
+                        for k in range(2, self.max_y-1, 2):
+                            self.action_to_acts_tuple_dic.update({a: (c, i, j, k)})
+                            # self.acts_tuple_to_action_dic.update({(c, i, j, k): a})
+                            a += 1
+            
+            self.n_actions = len(self.action_to_acts_tuple_dic) 
+            
+            self.n_actions = len(self.action_to_acts_tuple_dic) 
+            
+            
         ### Transformations
         self.translation_mat_dict = {'move_up': [0, 1],
                                      'move_right': [1, 0],
@@ -177,114 +348,111 @@ class LaserWallConfig:
                                   'rotate_ccw_front_seg': np.pi / 2,
                                   'rotate_cw_back_seg': -np.pi / 2,
                                   'rotate_ccw_back_seg': np.pi / 2}
+        
+        
+        ## set act_dim and obs_dim
+        self.act_dim = self.n_actions
+        self.action_space_type = 'discrete'
+        
+        if self.net_arch == 'Fc':
+            self.obs_dim = self.len_feature_state_vec
+            
+        elif self.net_arch == 'Cnn':
+            # self.obs_dim = ( self.n_channels, (self.n_rows+2) * self.cnn_scaling_factor, (self.n_cols+2) * self.cnn_scaling_factor )
+            self.obs_dim = ( self.n_channels, (self.n_rows+0) * self.cnn_scaling_factor, (self.n_cols+0) * self.cnn_scaling_factor )
+            
+        elif self.net_arch == 'MetaFc':
+            self.obs_fc_dim = self.len_feature_state_vec
+            self.obs_meta_dim = self.len_plan_area_prop_state_vec
+            self.obs_dim = self.len_state_vec
+            
+        elif self.net_arch == 'MetaCnn':
+            self.obs_cnn_dim = (self.n_channels, (self.n_rows+2) * self.cnn_scaling_factor, (self.n_cols+2) * self.cnn_scaling_factor)
+            self.obs_meta_dim = self.len_plan_area_prop_state_vec
+            self.obs_dim = tuple((self.obs_cnn_dim, self.obs_meta_dim))
+        
+        elif self.net_arch == 'Gnn':
+            pass
+        else:
+            raise NotImplementedError
+            
 
         ### CNN obs
-        self.color_map = {-3: 'gray',
-                          -2: 'lime',  # (0,0,0), #
-                          -1: 'white',  # (255,255,255), #
-                          0: 'black',  # (255,0,0), #
-                          1: 'red',  # (0,255,0), #
-                          2: 'green',  # (0,0,255), #
-                          3: 'blue',  # (255,255,0), #
-                          4: 'purple',  # (0,255,255), #
-                          5: 'magenta',  # (255,0,255), #
-                          6: 'maroon',  # (128,0,0), #
-                          7: 'yellow',  # (128,128,0), #
-                          8: 'cyan',  # (0,128,0), #
-                          9: 'olive',  # (128,0,128), #
-                          10: 'teal',  # (0,128,128), #
-                          11: 'navy',  # (0,0,128), #
-                          }
-
+        self.color_map = {
+                         0: 'cyan', #'blue', 
+                         
+                         1: 'dimgray', #'red', 
+                         2: 'gray', #'magenta', 
+                         3: 'gainsboro', #'darkblue', 
+                         4: 'silver', #'darkred', 
+                         
+                         5: 'darkblue', 
+                         6: 'darkgreen', # 'mediumvioletred', 
+                         7: 'darkred', # 'orange', 
+                         8: 'pink', # 'magenta', #'aqua', 
+                         9: 'darkseagreen', # 'darkorchid', 
+                         10: 'darkorchid', # 'skyblue', 
+                         11: 'blue', # 'pink', 
+                         12: 'darkviolet', # 'gold', 
+                         13: 'darkmagenta', # 'beige', 
+                         
+                         14: 'lime', #'silver', # white
+                         
+                         15: 'antiquewhite', # 'yellow',
+                         16: 'antiquewhite', # 'purple',  navajowhite
+                         17: 'antiquewhite', # 'teal',  blanchedalmond
+                         18: 'antiquewhite', # 'violet',  papayawhip
+                         19: 'moccasin', # chocolate
+                         
+                         20: 'hotpink',
+                         }
+    
     
         ### Directories and paths
-        self.storage_dir = f"{agent_dir}/storage/"
-        self.sb_tb_log_dir = f"{self.storage_dir}/sb_tb_log"
-        if not os.path.exists(self.sb_tb_log_dir):
-            os.makedirs(self.sb_tb_log_dir)
+        self.root_dir = root_dir
+        print('fenv_config.py -> housing_design_dir:', root_dir)
+        self.storage_dir = os.path.join(self.root_dir, 'storage')
+        self.rnd_agents_storage_dir = os.path.join(self.storage_dir, "rnd_agents_storage")
+        self.plan_path = os.path.join(self.rnd_agents_storage_dir, 'plans.csv')
+        self.ana_agents_storage_dir = os.path.join(self.storage_dir, "ana_agents_storage")
+        self.rl_agents_storage_dir = os.path.join(self.storage_dir, "rl_agents_storage")
+        self.rlb_agents_storage_dir = os.path.join(self.storage_dir, "rlb_agents_storage")
+        self.rlb_agents_tunner_dir = os.path.join(self.rlb_agents_storage_dir, "tunner")
+        self.rlb_agents_trainer_dir = os.path.join(self.rlb_agents_storage_dir, "trainer")
+        self.off_agents_storage_dir = os.path.join(self.storage_dir, "off_agents_storage")
+        self.trl_agents_storage_dir = os.path.join(self.storage_dir, "trl_agents_storage")
+        
+        if phase == "very_first_debug":
+            if not os.path.exists(self.storage_dir):
+                os.makedirs(self.storage_dir)
+            if not os.path.exists(self.rnd_agents_storage_dir):
+                os.makedirs(self.rnd_agents_storage_dir)
+            if not os.path.exists(self.ana_agents_storage_dir):
+                os.makedirs(self.ana_agents_storage_dir)
+            if not os.path.exists(self.rl_agents_storage_dir):
+                os.makedirs(self.rl_agents_storage_dir)
+            if not os.path.exists(self.rlb_agents_storage_dir):
+                os.makedirs(self.rlb_agents_storage_dir)
+            if not os.path.exists(self.rlb_agents_tunner_dir):
+                os.makedirs(self.rlb_agents_tunner_dir)
+            if not os.path.exists(self.rlb_agents_trainer_dir):
+                os.makedirs(self.rlb_agents_trainer_dir)
+            if not os.path.exists(self.off_agents_storage_dir):
+                os.makedirs(self.off_agents_storage_dir)
+            if not os.path.exists(self.trl_agents_storage_dir):
+                os.makedirs(self.trl_agents_storage_dir)
             
-        self.generated_plans_dir = f"{self.storage_dir}/generated_plans"
-        if not os.path.exists(self.generated_plans_dir):
-            os.makedirs(self.generated_plans_dir)
-        self.generated_gif_dir = f"{self.storage_dir}/generated_gif"
-        if not os.path.exists(self.generated_gif_dir):
-            os.makedirs(self.generated_gif_dir)
-    
-        self.scenario_dir_for_storing_data = f"{self.generated_plans_dir}" # "/{self.scenario_name}"
-        if not os.path.exists(self.scenario_dir_for_storing_data):
-            os.makedirs(self.scenario_dir_for_storing_data)
-            
-        if self.load_valid_plans_flag:
-            if self.is_area_considered and self.is_proportion_considered:
-                self.plan_values_path = f"{self.generated_plans_dir}/plan_values__{self.n_walls:02}_walls__area_proportion.csv"
-            elif self.is_area_considered:
-                self.plan_values_path = f"{self.generated_plans_dir}/plan_values__{self.n_walls:02}_walls__area.csv"
-            else:
-                self.plan_values_path = f"{self.generated_plans_dir}/plan_values__{self.n_walls:02}_walls__proportion.csv"
-                
-        if self.mask_flag:
-            if self.plan_config_source_name == 'test_config':
-                self.mask_numbers = 4
-                self.masked_corners = ['corner_11', 'corner_00', 'corner_01', 'corner_10']# ['corner_00', 'corner_11'] # ['corner_00'] # ['corner_10', 'corner_00', 'corner_11', 'corner_01']# ['corner_11', 'corner_10', 'corner_00'] # ['corner_01']# ['corner_11', 'corner_10'] # ['corner_00', 'corner_01', 'corner_10'] # ['corner_11', 'corner_10', 'corner_00']  
-                
-                self.mask_lengths = [3, 1, 1, 1]#[6, 4] # [5] # [6, 4, 2, 1] # [5, 8, 4] # [3] # [1, 2] # [4, 7, 9] #[5, 9, 9] 
-                self.mask_widths = [9, 8, 9, 6]# [9, 4] # [2] # [3, 8, 3, 7] # [3, 7, 9] # [6] # [6, 9] # [2, 1, 7] #[6, 2, 5] 
-                
-                self.masked_area = np.sum([(L+1)*(W+1) for L, W in zip(self.mask_lengths, self.mask_widths)])
-                
-                fixed_desired_areas = [16.0, 35.0, 38.0, 18.0, 32.0, 18.0, 35.0, 43.0, 26.0, 21.0, 67.0]#[38.0, 48.0, 50.0, 23.0, 57.0, 37.0, 28.0, 160.0] # [33.0, 19.0, 23.0, 46.0, 43.0, 48.0, 47.0, 26.0, 24.0, 39.0, 75.0] # [67.0, 41.0, 44.0, 38.0, 34.0, 58.0, 58.0] # [41.0, 35.0, 32.0, 38.0, 26.0, 55.0, 68.0] # [77.0, 104.0, 103.0, 157.0] # [126.0, 83.0, 65.0, 167.0] # [71.0, 66.0, 50.0, 254.0] #[76.0, 72.0, 81.0,  80.0]
-                self.sampled_desired_areas = {f"room_{self.mask_numbers+1+i}": area for i, area in enumerate(fixed_desired_areas)}
-            
-            elif self.plan_config_source_name in ['load_fixed_config', 'load_random_config']:
-                env_data_df = pd.read_csv(self.plan_values_path, nrows=self.nrows_of_env_data_csv)
-                sampled_plan = env_data_df.sample()
-                self.mask_numbers = int(sampled_plan['mask_numbers'].values.tolist()[0])
-                masked_corners = list(map(str, sampled_plan['masked_corners'].tolist()[0][1:-1].split(',') ) )
-                self.masked_corners = [cor.replace("'","").strip() for cor in masked_corners]
-                self.mask_lengths = np.array(list(map(float, sampled_plan['mask_lengths'].tolist()[0][1:-1].split(','))), dtype=np.int32).tolist()
-                self.mask_widths = np.array(list(map(float, sampled_plan['mask_widths'].tolist()[0][1:-1].split(','))), dtype=np.int32).tolist()
-                self.masked_area = np.sum([(L+1)*(W+1) for L, W in zip(self.mask_lengths, self.mask_widths)])
-                sampled_desired_areas = list(map(float, sampled_plan['desired_areas'].tolist()[0][1:-1].split(',')))
-                self.sampled_desired_areas = {f"room_{i+1+self.mask_numbers}":a for i, a in enumerate(sampled_desired_areas)}
-            
-            elif self.plan_config_source_name in ['create_fixed_config', 'create_random_config']:
-                while True:
-                    self.mask_numbers = np.random.randint(4) + 1
-                    self.masked_corners = np.random.choice(list(self.corners.keys()), size=self.mask_numbers, replace=False)    
-                    
-                    self.mask_lengths = np.random.randint(1, int(self.max_x/2), size=self.mask_numbers)
-                    self.mask_widths = np.random.randint(1, int(self.max_y/2), size=self.mask_numbers)
-                    
-                    self.masked_area = np.sum([(L+1)*(W+1) for L, W in zip(self.mask_lengths, self.mask_widths)])
-                    if self.masked_area <= self.total_area / 2:
-                        break
-                self.sampled_desired_areas = 0 # be careful 
-            else:
-                raise ValueError('Wrong plan_config_source_name!')
-                
-        else:
-            self.mask_numbers = 0
-            self.sampled_desired_areas = 0 # be careful 
-            
+        # self.offline_datasets_dir = os.path.join(self.storage_dir, 'offline_datasets')
+        # if not os.path.exists(self.offline_datasets_dir):
+        #     os.makedirs(self.offline_datasets_dir)
+        # self.context_mdoel_path = os.path.join(self.offline_datasets_dir, 'model.pt')    
 
-        #### area_plots
-        self.area_plots_dir = f"{self.storage_dir}/area_plots"
-        if not os.path.exists(self.area_plots_dir):
-            os.makedirs(self.area_plots_dir)
-    
-        self.area_gif_dir = f"{self.storage_dir}/area_gif"
-        if not os.path.exists(self.area_gif_dir):
-            os.makedirs(self.area_gif_dir)
-    
-        self.walls_data_dir = f"{self.storage_dir}/walls_data"
-        self.walls_data_path = f"{self.walls_data_dir}/walls_coords.p"
-        # self.last_walls_data_path = f"{self.walls_data_dir}/last_walls_coords.p"
-        self.fixed_walls_path = f"{self.walls_data_dir}/fixed_walls.p"
-        if not os.path.exists(self.walls_data_dir):
-            os.makedirs(self.walls_data_dir)
-    
+
+
     def get_config(self):
         return self.__dict__
+
+
 
 
 # %%

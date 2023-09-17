@@ -6,7 +6,7 @@ Created on Mon Aug  9 01:18:33 2021
 """
 
 #%%
-import gym
+import gymnasium as gym
 
 from gym_floorplan.base_env.action.base_actoin import BaseAction
 

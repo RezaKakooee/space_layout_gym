@@ -27,6 +27,7 @@ class RoomExtractor:
         self.fenv_config = fenv_config
         
         
+        
     def update_room_dict(self, plan_data_dict, active_wall_name):
         room_i = wall_i = int(active_wall_name.split("_")[1])
         room_name = f"room_{room_i}"
@@ -41,28 +42,45 @@ class RoomExtractor:
         plan_data_dict = self._update_plan_data_dict_based_on_room_shape_properties(plan_data_dict, room_i, room_name)
         
         plan_data_dict = self._update_plan_data_dict_based_on_sub_rectangles(plan_data_dict, room_name)
+
         
         room_shape = plan_data_dict['rooms_dict'][room_name]['room_shape']
         
         if  room_shape == 'rectangular':    
             proportions = [plan_data_dict['rooms_dict'][room_name]['room_aspect_ratio']]
         else:
-            proportions = plan_data_dict['rooms_dict'][room_name]['sub_rects']['aspect_ratios']
+            proportions = plan_data_dict['rooms_dict'][room_name]['sub_rects']['aspect_ratio']
             
         plan_data_dict['rooms_dict'][room_name]['proportions'] = proportions
         
-        if wall_i >= plan_data_dict['mask_numbers']:
-            if len(proportions) == 0:
-                print(proportions)
+        if plan_data_dict['last_room']['last_room_name'] is not None: 
+            last_room_i = plan_data_dict['last_room']['last_room_i']
+            last_room_name = plan_data_dict['last_room']['last_room_name']
             
+            plan_data_dict = self._update_plan_data_dict_based_on_room_shape_properties(plan_data_dict, last_room_i, last_room_name)
+            
+            plan_data_dict = self._update_plan_data_dict_based_on_sub_rectangles(plan_data_dict, last_room_name)
+            
+            room_shape = plan_data_dict['rooms_dict'][last_room_name]['room_shape']
+        
+            if  room_shape == 'rectangular':    
+                proportions = [plan_data_dict['rooms_dict'][last_room_name]['room_aspect_ratio']]
+            else:
+                proportions = plan_data_dict['rooms_dict'][last_room_name]['sub_rects']['aspect_ratio']
+                
+            plan_data_dict['rooms_dict'][last_room_name]['proportions'] = proportions
+        
+            assert len(plan_data_dict['areas_achieved']) <= plan_data_dict['number_of_total_rooms'], "We created more rooms than required!" # TODO
+        
         return plan_data_dict
     
     
+    
     def _update_plan_data_dict_based_on_room_areas(self, plan_data_dict, labels, wall_i, room_i, room_name):
-        moving_labels = plan_data_dict['moving_labels']
+        obs_moving_labels = plan_data_dict['obs_moving_labels']
         obs_mat_for_dot_prod = plan_data_dict['obs_mat_for_dot_prod']
         labels_ = copy.deepcopy(labels)
-        cover0 = np.argwhere(moving_labels != 0)
+        cover0 = np.argwhere(obs_moving_labels != 0)
         if len(cover0) >= 1:
             for i, j in cover0:
                 labels[i,j] = 0
@@ -76,65 +94,101 @@ class RoomExtractor:
             possible_areas = [0]
         min_area = np.min(possible_areas)
         # print(f"possible_areas: {possible_areas}")
-        min_room_unique_possible_id = room_unique_possible_ids[np.argmin(possible_areas)]
-        moving_labels[labels==min_room_unique_possible_id] = room_i
-        # moving_labels = np.multiply(moving_labels, obs_mat_for_dot_prod)
+        try:
+            min_room_unique_possible_id = room_unique_possible_ids[np.argmin(possible_areas)]
+        except:
+            print('wait in room_extractor')
+            raise ValueError("possible_areas is empty")
+        obs_moving_labels[labels==min_room_unique_possible_id] = room_i
+        # obs_moving_labels = np.multiply(obs_moving_labels, obs_mat_for_dot_prod)
         this_wall_len = len(np.argwhere(plan_data_dict['obs_mat_w'] == -wall_i ))
         if self.fenv_config['include_wall_in_area_flag']:
             this_room_area = min_area + this_wall_len
         else:
             this_room_area = min_area
-        plan_data_dict['areas'].update({room_name: this_room_area})
+        plan_data_dict['areas_achieved'].update({room_name: this_room_area})
         if self.fenv_config['mask_flag']:
-            if room_i > plan_data_dict['mask_numbers']:
-                plan_data_dict['delta_areas'].update({room_name: this_room_area - plan_data_dict['desired_areas'][room_name]})
+            if room_i >= self.fenv_config['min_room_id']:
+                try:
+                    plan_data_dict['areas_delta'].update({room_name: this_room_area - plan_data_dict['areas_desired'][room_name]})
+                except:
+                    print('wait in _update_plan_data_dict_based_on_room_areas of room_extractor')
+                    raise ValueError("room_name is not exist")
+                    
         else:
-            plan_data_dict['delta_areas'].update({room_name: this_room_area - plan_data_dict['desired_areas'][room_name]})
+            plan_data_dict['areas_delta'].update({room_name: this_room_area - plan_data_dict['areas_desired'][room_name]})
         plan_data_dict['rooms_dict'].update({room_name: {}})
         plan_data_dict['rooms_dict'][room_name].update({"room_area": this_room_area})
         plan_data_dict['rooms_dict'][room_name].update({"room_pure_area": min_area})
         
-        room_positions = np.argwhere(moving_labels == room_i).tolist()
+        room_positions = np.argwhere(obs_moving_labels == room_i).tolist()
         plan_data_dict['rooms_dict'][room_name].update({'room_positions': room_positions}) 
         
-        if room_i == (plan_data_dict['number_of_walls']):
-            last_room_name = f"room_{room_i+1}"
-            last_room_i = room_i + 1
-            plan_data_dict['rooms_dict'].update({last_room_name: {}})
+        if len(plan_data_dict['wall_order']) == plan_data_dict['n_walls'] - 1: # TODO_ # so this is the second last room
+            for i in self.fenv_config['real_room_id_range'][:len(plan_data_dict['areas_desired'])]: # TODO_ # finind the remaining room name as the last room
+                if f"room_{i}" not in plan_data_dict['areas_achieved'].keys():
+                    last_room_name = f"room_{i}"
+                    last_room_i = i
+            
+            try:
+                plan_data_dict['rooms_dict'].update({last_room_name: {}})
+            except:
+                print('watin in _update_plan_data_dict_based_on_room_areas of room_extractor')
+                raise('local variable last_room_name referenced before assignment')
             
             max_area = np.max(possible_areas)
-            max_room_unique_possible_id = room_unique_possible_ids[np.argmax(possible_areas)]
+            if possible_areas[0] == possible_areas[1]:
+                max_indx = 1
+            else:
+                max_indx = np.argmax(possible_areas)
+            max_room_unique_possible_id = room_unique_possible_ids[max_indx]
             
-            moving_labels[labels==max_room_unique_possible_id] = last_room_i
-            # moving_labels = np.multiply(moving_labels, obs_mat_for_dot_prod)
+            obs_moving_labels[labels==max_room_unique_possible_id] = last_room_i
             
-            
-            plan_data_dict['areas'].update({last_room_name: max_area})
-            plan_data_dict['delta_areas'].update({last_room_name: max_area - plan_data_dict['desired_areas'][last_room_name]})
+            plan_data_dict['areas_achieved'].update({last_room_name: max_area})
+            try:
+                plan_data_dict['areas_delta'].update({last_room_name: max_area - plan_data_dict['areas_desired'][last_room_name]})
+            except:
+                print('wait in _update_plan_data_dict_based_on_room_areas of room_extractor')
+                raise ValueError('Probably room index does not index!')
             plan_data_dict['rooms_dict'].update({last_room_name: {}})
             plan_data_dict['rooms_dict'][last_room_name].update({"room_area": max_area})
+            plan_data_dict['rooms_dict'][last_room_name].update({"room_pure_area": max_area})
             
-            room_positions = np.argwhere(moving_labels == last_room_i).tolist()
+            room_positions = np.argwhere(obs_moving_labels == last_room_i).tolist()
             plan_data_dict['rooms_dict'][last_room_name].update({'room_positions': room_positions})
-            
         
-        plan_data_dict['moving_labels'] = moving_labels
+            plan_data_dict['last_room'] = {}
+            plan_data_dict['last_room']['last_room_i'] = last_room_i
+            plan_data_dict['last_room']['last_room_name'] = last_room_name
+            
+        else:
+            plan_data_dict['last_room'] = {}
+            plan_data_dict['last_room']['last_room_i'] = None
+            plan_data_dict['last_room']['last_room_name'] = None
+        
+        plan_data_dict['obs_moving_labels'] = obs_moving_labels
+         
         return plan_data_dict
         
     
+    
     def _update_plan_data_dict_based_on_room_shape_properties(self, plan_data_dict, room_i, room_name):
         room_positions = plan_data_dict['rooms_dict'][room_name]['room_positions']
-        wall_positions = plan_data_dict['walls_coords'][f"wall_{room_i}"]['wall_positions']
+        
+        if len(plan_data_dict['areas_achieved']) < plan_data_dict['number_of_total_rooms']:  # TODO
+            wall_positions = plan_data_dict['walls_coords'][f"wall_{room_i}"]['wall_positions']
         
         only_this_room_labels_mat = np.zeros((self.fenv_config['n_rows'], self.fenv_config['n_cols']))
         
-        moving_ones = copy.deepcopy(plan_data_dict['moving_ones'])
+        obs_moving_ones = copy.deepcopy(plan_data_dict['obs_moving_ones'])
         for r, c in room_positions:
             only_this_room_labels_mat[r,c] = room_i
-            moving_ones[r,c] = 1
-            
-        for r, c in wall_positions:
-            moving_ones[r,c] = 1
+            obs_moving_ones[r,c] = 1
+        
+        if len(plan_data_dict['areas_achieved']) < plan_data_dict['number_of_total_rooms']: # TODO
+            for r, c in wall_positions:
+                obs_moving_ones[r,c] = 1
             
         only_this_room_labels_mat = self._add_outlines(only_this_room_labels_mat)
         
@@ -146,20 +200,25 @@ class RoomExtractor:
         if plan_data_dict['rooms_dict'][room_name]['room_pure_area'] == (room_height * room_width): # it means that the new room has certanily rectangle shape
             room_shape = "rectangular"
             aspect_ratio = max(room_height, room_width) / min(room_height, room_width)
+            delta_aspect_ratio = abs (aspect_ratio - self.fenv_config['desired_aspect_ratio'])
         else:
             ### note that a room could have non-rectangle shape. 
             ### But still we store its properties for now, and then 
             ### we partition it to sub-rectangles
             room_shape = "nonrectangular"
             aspect_ratio = None
+            delta_aspect_ratio = None            
         
         plan_data_dict['rooms_dict'][room_name].update({'room_shape': room_shape})
         plan_data_dict['rooms_dict'][room_name].update({'room_height': room_height})
         plan_data_dict['rooms_dict'][room_name].update({'room_width': room_width})
         plan_data_dict['rooms_dict'][room_name].update({'room_aspect_ratio': aspect_ratio})
+        plan_data_dict['rooms_dict'][room_name].update({'delta_aspect_ratio': delta_aspect_ratio})
         
-        plan_data_dict['moving_ones'] = copy.deepcopy(moving_ones)
+        plan_data_dict['obs_moving_ones'] = copy.deepcopy(obs_moving_ones)
+        
         return plan_data_dict
+
 
 
     def _add_outlines(self, arr):
@@ -170,6 +229,7 @@ class RoomExtractor:
         arr = np.hstack([col, arr])
         arr = np.hstack([arr, col])
         return arr
+        
         
         
     def _update_plan_data_dict_based_on_sub_rectangles(self, plan_data_dict, room_name):
@@ -187,11 +247,37 @@ class RoomExtractor:
             widths = [np.shape(val['cols'])[1] for key, val in all_rects.items()]
             heights = [np.shape(val['cols'])[0] for key, val in all_rects.items()]
             aspect_ratios = [max(h, w) / min(h, w) for w,h in zip(heights, widths)]
-            plan_data_dict['rooms_dict'][room_name].update({'sub_rects': {'areas': areas, 
-                                                      'widths': widths,
-                                                      'heights': heights,
-                                                      'aspect_ratios': aspect_ratios}})
+            aspect_ratio = max(np.array(aspect_ratios))
+            
+            
+            all_rects_ = Partitioner(np.rot90(temp_obs_mat)).get_rectangules()
+            areas_ = [len(val['rows'])*np.shape(val['cols'])[1] for key, val in all_rects_.items()]
+            widths_ = [np.shape(val['cols'])[1] for key, val in all_rects_.items()]
+            heights_ = [np.shape(val['cols'])[0] for key, val in all_rects_.items()]
+            aspect_ratios_ = [max(h, w) / min(h, w) for w,h in zip(heights_, widths_)]
+            aspect_ratio_ = max(np.array(aspect_ratios_))
+            
+            aspect_ratio = min(aspect_ratio, aspect_ratio_)
+            
+            delta_aspect_ratio = abs(aspect_ratio - self.fenv_config['desired_aspect_ratio'])
+
+            all_rects_positions = {key: [] for key in all_rects}
+            for sub_r, rc in all_rects.items():
+                for r, cs in zip(rc['rows'], rc['cols']):
+                    for c in cs:
+                        all_rects_positions[sub_r].append([r, c])
+                        
+            plan_data_dict['rooms_dict'][room_name].update({'sub_rects': {'areas_achieved': areas, 
+                                                            'widths': widths,
+                                                            'heights': heights,
+                                                            # 'aspect_ratios': aspect_ratios,
+                                                            'aspect_ratio': aspect_ratio,
+                                                            'delta_aspect_ratio': delta_aspect_ratio,
+                                                            'all_rects_positions': all_rects_positions}})
+            plan_data_dict['rooms_dict'][room_name]['aspect_ratio'] = aspect_ratio
+            plan_data_dict['rooms_dict'][room_name]['delta_aspect_ratio'] = delta_aspect_ratio
         return plan_data_dict
+    
     
     
     def _get_segmentation_map(self, obs_mat):
@@ -212,9 +298,11 @@ class RoomExtractor:
         return obs_mat, labels
     
     
+    
     def _get_contours(self, only_new_room_labels_mat):
         contours = measure.find_contours(only_new_room_labels_mat, 0.01)
         return contours
+    
     
     
     def _get_room_map(self, obs_mat):
@@ -226,6 +314,7 @@ class RoomExtractor:
         rooms_idx, rooms_area  = np.unique(labels, return_counts=True)
         num_rooms = len(rooms_idx)
         return labels
+    
     
     
     def _get_contours_height_width(self, contour):

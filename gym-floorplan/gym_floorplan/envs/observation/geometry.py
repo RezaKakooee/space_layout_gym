@@ -105,7 +105,6 @@ class Wall:
 #%%
 class Outline:
     def __init__(self, fenv_config:dict=None):
-        
         coords = {'left':  [  [ fenv_config['min_x'], fenv_config['min_y'] ], 
                               [ fenv_config['min_x'], fenv_config['max_y'] ]  ],
                   'down':  [  [ fenv_config['min_x'], fenv_config['min_y'] ], 
@@ -114,12 +113,11 @@ class Outline:
                               [ fenv_config['max_x'], fenv_config['max_y'] ]  ],
                   'up':    [  [ fenv_config['min_x'], fenv_config['max_y'] ], 
                               [ fenv_config['max_x'], fenv_config['max_y'] ]  ]}
-            
         ordered_directions = ['vertical', 'horizental', 'vertical', 'horizental']
         
-        self.outline_segments = {}
+        self.wall_outline_segments = {}
         for i, (key, val) in enumerate(coords.items()):   
-            self.outline_segments[f"{key}_segment"] = self._create_segment(start_coord=val[0],
+            self.wall_outline_segments[f"{key}_segment"] = self._create_segment(start_coord=val[0],
                                                                            end_coord=val[1],
                                                                            orientation='axial',
                                                                            direction=ordered_directions[i],
@@ -148,18 +146,18 @@ class Outline:
 #%%   
 class Plan:
     def __init__(self, outline_dict:dict=None, walls_coords:dict=None):
-        outline_segments = outline_dict['outline_segments']
+        wall_outline_segments = outline_dict['wall_outline_segments']
         
         if walls_coords is None:
             self.walls_dict = {}
-            self.walls_segments_dict = inline_segments = {}
+            self.walls_segments_dict = wall_inline_segments = {}
         else:
             self.walls_dict = self._get_walls_dict(walls_coords=walls_coords)
             
-            self.walls_segments_dict, inline_segments = self._get_inline_segments(walls_dict=self.walls_dict)
+            self.walls_segments_dict, wall_inline_segments = self._get_wall_inline_segments(walls_dict=self.walls_dict)
             
-        self.segments_dict = self._get_segments_dict(outline_segments=outline_segments, 
-                                                      inline_segments=inline_segments)
+        self.segments_dict = self._get_segments_dict(wall_outline_segments=wall_outline_segments, 
+                                                      wall_inline_segments=wall_inline_segments)
     
     
     @staticmethod
@@ -172,26 +170,26 @@ class Plan:
     
     
     @staticmethod
-    def _get_inline_segments(walls_dict:dict=None):
-        inline_segments = {}
+    def _get_wall_inline_segments(walls_dict:dict=None):
+        wall_inline_segments = {}
         for wall_name, wall_value in walls_dict.items():
-          inline_segments.update({f"{wall_name}_back_segment":wall_value['back_segment']})
-          inline_segments.update({f"{wall_name}_front_segment":wall_value['front_segment']}) 
+          wall_inline_segments.update({f"{wall_name}_back_segment":wall_value['back_segment']})
+          wall_inline_segments.update({f"{wall_name}_front_segment":wall_value['front_segment']}) 
           
         walls_segments_dict = {}
         for wall_name, wall_value in walls_dict.items():
                 walls_segments_dict.update({wall_name: {'back_segment': wall_value['back_segment'],
                                              'front_segment': wall_value['front_segment']}})
-        return walls_segments_dict, inline_segments
+        return walls_segments_dict, wall_inline_segments
             
     
     @staticmethod        
-    def _get_segments_dict(outline_segments:dict=None, inline_segments:dict=None):
-        segments_dict = {'outline': {key:val for key, val in outline_segments.items()}}
-        if inline_segments is None:
+    def _get_segments_dict(wall_outline_segments:dict=None, wall_inline_segments:dict=None):
+        segments_dict = {'outline': {key:val for key, val in wall_outline_segments.items()}}
+        if wall_inline_segments is None:
             segments_dict.update({'inline': {}})
         else:
-            segments_dict.update({'inline': {key:val for key, val in inline_segments.items()}})
+            segments_dict.update({'inline': {key:val for key, val in wall_inline_segments.items()}})
         return segments_dict
 
 
