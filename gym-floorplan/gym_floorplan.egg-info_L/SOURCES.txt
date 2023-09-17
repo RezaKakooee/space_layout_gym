@@ -1,6 +1,0 @@
-setup.py
-gym_floorplan.egg-info/PKG-INFO
-gym_floorplan.egg-info/SOURCES.txt
-gym_floorplan.egg-info/dependency_links.txt
-gym_floorplan.egg-info/requires.txt
-gym_floorplan.egg-info/top_level.txt
