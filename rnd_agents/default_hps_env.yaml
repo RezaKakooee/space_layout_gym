@@ -1,0 +1,22 @@
+library: SB
+## env
+env_name: SpaceLayoutGym-v0
+## reward
+rewarding_method_name: ZC_Smooth_Log_Reward
+zc_reward_weighening_mode: 02_01_02_01_94
+reward_vertical_scalar: 100
+zc_ignore_immidiate_reward: 0
+shift_zc_reward_bottom_to_zero: 1
+## obs
+cnn_observation_name: canvas_1d
+cnn_scaling_factor: 1
+encoding_type: OHO # OHO EMB
+image_encoder_type: TinyCnnEncoder # MiniResNet MiniResNet ResNetX
+## action
+action_masking_flag: False
+## constraints
+plan_config_source_name: fixed_test_config
+zc_has_geom_tolerance: True
+learn_room_order_directly: True
+lv_mode: True
+n_rooms: 4

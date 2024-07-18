@@ -10,6 +10,7 @@ import pickle
 import numpy as np
 
 
+
 #%%
 class WallGenerator:
     def __init__(self, fenv_config:dict=None):
@@ -22,7 +23,7 @@ class WallGenerator:
 
         else:
             if not isinstance(walls_coords, dict):
-                    raise ValueError("in make_walls of wall_generator: walls_coords must be dict!")
+                    raise ValueError(f"In make_walls of wall_generator: walls_coords must be dict! The current type is: {type(walls_coords)}")
             walls_coords = {wall_name: walls_coords} # wall_1 is a temp name
         
         walls_coords = self._make_walls_properties(walls_coords)

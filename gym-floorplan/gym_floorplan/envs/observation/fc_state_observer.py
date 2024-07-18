@@ -28,6 +28,12 @@ class FcStateObserver:
                     'observation_fc': observation_fc,
                     })   
         
+        if self.fenv_config['very_short_observation_fc_flag']:
+            very_short_observation_fc = self._get_very_short_observation_fc(warooge_data)
+            plan_data_dict.update({
+                        'observation_fc': very_short_observation_fc,
+                        })  
+        
         return plan_data_dict
         
         
@@ -36,6 +42,21 @@ class FcStateObserver:
         warooge_data, wall_state_vector = self._get_wall_state_vector(plan_data_dict, active_wall_name)
         return warooge_data, wall_state_vector
 
+    
+
+    def _get_very_short_observation_fc(self, warooge_data):
+        wall_important_points_dict = warooge_data['wall_important_points_dict']
+        very_short_observation_fc_dict = {}
+        very_short_observation_fc_vec = []
+        for i in range(1, self.fenv_config['cell_id_max']):
+            wall_name = f"wall_{i}"
+            three_coords = [wall_important_points_dict[wall_name].get(key) for key in ['anchor', 'start_of_wall', 'end_of_wall']]
+            very_short_observation_fc_dict.update({
+                wall_name: three_coords
+                })
+            very_short_observation_fc_vec += [item for lst in three_coords for item in lst]
+        return very_short_observation_fc_vec
+    
     
 
     def _get_wall_state_vector(self, plan_data_dict, active_wall_name=None):

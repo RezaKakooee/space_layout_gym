@@ -8,10 +8,12 @@ Created on Fri Jul 30 14:27:30 2021
 
 #%%
 import os
+import inspect
 import copy
 import datetime
 import numpy as np
 from PIL import Image
+from webcolors import name_to_rgb
 from collections import defaultdict
 
 import bezier
@@ -37,8 +39,9 @@ import shapely
 from shapely.geometry import Polygon, LineString, LinearRing
 from shapely.ops import unary_union, polygonize
 
-
 from gym_floorplan.envs.render.colors_lib import get_color_dict
+
+
 
 #%%
 class RenderPlan:
@@ -48,128 +51,8 @@ class RenderPlan:
         
         self._initialize_variables()
 
-
-
-    def portray(self, plan_data_dict, episode, ep_time_step):
-        self.plan_data_dict = plan_data_dict
-        self.episode = episode
-        self.ep_time_step = ep_time_step + 1
-        
-        
-        self.wall_colors, self.room_colors = get_color_dict(phase=self.fenv_config['phase'])
-        
-        
-        arr = copy.deepcopy(plan_data_dict['obs_rooms_cmap'])
-        arr[arr<=5] = 0
-        
-        # Get unique rooms
-        rooms = np.unique(arr)[1:]
-        self.room_colors.update({
-            'room_10': 'brown'
-            })
-        
-        colors = [self.room_colors[f"room_{r}"] for r in rooms]
-        
-        arr = np.kron(arr, np.ones((32, 32), dtype=arr.dtype))
-        
-
-        # Generate color image  
-        colored = label2rgb(arr, colors=colors, bg_label=0, bg_color=(1,1,1), alpha=0.5)
-        # im = Image.fromarray(np.uint8(colored*255)).convert('RGB')
-        # im.show()
-        
-
-        # Find contours for each room
-        arr = np.transpose(arr)
-        contours = []
-        for room in rooms:
-          contours.append(find_contours(arr==room, 0.99999)[0])
-        
-        # convert countours to polygons
-        polygons = []
-        for c in contours:
-          # Close contour into ring
-          ring = LinearRing(c) 
-          # Simplify coordinates
-          simplified = shapely.simplify(ring, tolerance=2)
-          # Create polygon 
-          poly = Polygon(simplified)
-          polygons.append(poly)
-        
-        
-        # Plot
-        fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
-        ax.imshow(colored)
-        for poly in polygons:
-          x, y = poly.exterior.xy
-          ax.plot(x, y, color='black', linewidth=2)
-
-        ax.set_axis_off()
-        plt.show()
-        
-        if self.fenv_config['save_render_flag']: self._save_the_plan(fig, name='portray')
-                
             
       
-    # def show_walls(self, plan_data_dict):
-    #     wall_important_points_dict = plan_data_dict['warooge_data_main']['wall_important_points_dict']
-        
-    #     def get_wall_coords(wall_important_points_dict):
-    #         wall_important_coords_dict = defaultdict(dict)
-    #         for wall_name, wall_val in wall_important_points_dict.items():
-    #             for pos_name, pos_val in wall_val.items():
-    #                 wall_important_coords_dict[wall_name][pos_name] = self.__image_coords2cartesian(pos_val[0], pos_val[1], self.fenv_config['max_y'])
-                    
-    #         return wall_important_coords_dict
-        
-    #     # wall_important_coords_dict = get_wall_coords(wall_important_points_dict)
-        
-        
-    #     fig, ax = plt.subplots()
-        
-    #     rect = Rectangle(xy=(self.fenv_config['min_x'], self.fenv_config['min_y']), 
-    #                       width=self.fenv_config['max_x'], 
-    #                       height=self.fenv_config['max_y'], 
-    #                       linewidth=1, edgecolor='r', facecolor='none')
-        
-    #     # Add the patch to the Axes
-    #     ax.add_patch(rect)
-        
-    #     plt.xlim(self.fenv_config['min_x']-2, self.fenv_config['max_x']+2)
-    #     plt.ylim(self.fenv_config['min_y']-2, self.fenv_config['max_y']+2)
-    #     plt.gca().set_aspect('equal', adjustable='box') # to keep the plot square
-        
-    #     # Making a 21x21 grid
-    #     plt.xticks(range(self.fenv_config['min_x']-2, self.fenv_config['max_x']+2))
-    #     plt.yticks(range(self.fenv_config['min_y']-2, self.fenv_config['max_y']+2))
-    #     plt.grid(True)
-        
-    #     for wall_name, wall_val in wall_important_points_dict.items():
-    #         if wall_name not in ['wall_1', 'wall_10']:
-    #             wall_color = self.wall_colors[wall_name + '_front_segment']
-                
-    #             x_wall_base_ba = [wall_val['before_anchor'][0]+1, wall_val['anchor'][0]+1]
-    #             y_wall_base_ba = [wall_val['before_anchor'][1]+2, wall_val['anchor'][1]+2]
-    #             plt.plot(x_wall_base_ba, y_wall_base_ba, color=wall_color, linewidth=2)
-                
-    #             x_wall_base_aa = [wall_val['anchor'][0]+1, wall_val['after_anchor'][0]+1]
-    #             y_wall_base_aa = [wall_val['anchor'][1]+2, wall_val['after_anchor'][1]+2]
-    #             plt.plot(x_wall_base_aa, y_wall_base_aa, color=wall_color, linewidth=2)
-                
-    #             x_wall_extention_sb = [wall_val['start_of_wall'][0]+1, wall_val['before_anchor'][0]+1]
-    #             y_wall_extention_sb = [wall_val['start_of_wall'][1]+2, wall_val['before_anchor'][1]+2]
-    #             plt.plot(x_wall_extention_sb, y_wall_extention_sb, color=wall_color, linewidth=2)
-                
-    #             x_wall_extention_ae = [wall_val['after_anchor'][0]+1, wall_val['end_of_wall'][0]+1]
-    #             y_wall_extention_ae = [wall_val['after_anchor'][1]+2, wall_val['end_of_wall'][1]+2]
-    #             plt.plot(x_wall_extention_ae, y_wall_extention_ae, color=wall_color, linewidth=2)
-                
-    #     ax.set_axis_off()
-    #     plt.show()
-        
-        
-        
-        
     def render(self, plan_data_dict, episode, ep_time_step):
         self.plan_data_dict = plan_data_dict
         self.episode = episode
@@ -196,14 +79,14 @@ class RenderPlan:
         if ( self.fenv_config['show_graph_on_plan_flag'] and 
              len(plan_data_dict['wall_types']) == plan_data_dict['n_walls']):
             self.__get_all_gravity_coords()
-            self.__draw_room_edges()
+            if not self.fenv_config['only_draw_room_gravity_points_flag']: self.__draw_room_edges()
             # self.__draw_facade_edges()
-            self.__draw_entrance_edges()
+            if not self.fenv_config['only_draw_room_gravity_points_flag']: self.__draw_entrance_edges()
             self.__draw_room_gravity_points()
         else:
             self.fenv_config['phase'] == 'debug'
             self.__get_all_gravity_coords()
-            self.__draw_room_gravity_points()
+            # self.__draw_room_gravity_points()
         
     
         # ax.set_axis_off()
@@ -226,8 +109,7 @@ class RenderPlan:
         
         im = Image.fromarray(X)
         
-        obs_mat = self._edit_obs_mat(X[:,:,0])
-        
+        # obs_mat = self._edit_obs_mat(X[:,:,0])
         
         if self.fenv_config['show_render_flag']:
             ## legend = self.ax.legend(loc='upper center', bbox_to_anchor=(0.5, 0.015), fancybox=True, shadow=False, ncol=4)
@@ -238,14 +120,15 @@ class RenderPlan:
                 pass
             plt.show(block=False)
             
-        if self.fenv_config['save_render_flag']: self._save_the_plan(self.fig)
-            
-        return obs_mat
-
+        if self.fenv_config['save_render_flag']: 
+            plan_fig_path = self._save_the_plan(self.fig)
+            return plan_fig_path
+        
+        # return im
 
 
     def _initialize_variables(self):
-        self.wall_colors, self.room_colors = get_color_dict(phase=self.fenv_config['phase'])
+        self.wall_colors, self.room_colors = get_color_dict(self.fenv_config)
         
         self.marker_dict = {'north': '^', 'south': 'v', 'east': '>', 'west': '<'}
     
@@ -486,7 +369,7 @@ class RenderPlan:
                     y2 = [corner_xy[1]+1 , sd['reflection_coord'][1]+delta_l]
                     
         else:
-            raise ValueError('Wrong corner to display')
+            raise ValueError(f"Wrong corner to display: {self.plan_data_dict['masked_corners'][i]}")
             
         return x1, y1, x2, y2
         
@@ -534,7 +417,7 @@ class RenderPlan:
                     y2 = [corner_xy[1] , sd['reflection_coord'][1]+delta_l]
                     
         else:
-            raise ValueError('Wrong corner to display')
+            raise ValueError(f"Wrong corner to display: {self.plan_data_dict['masked_corners'][i]}")
             
         return x1, y1, x2, y2
     
@@ -636,15 +519,18 @@ class RenderPlan:
 
     
     def __draw_room_gravity_points(self):
-        blind_rooms_str = [str(br) for br in self.plan_data_dict['edge_color_data_dict_facade']['blind_rooms']]
+        if self.fenv_config['adaptive_window']:
+            blind_rooms_str = [str(br) for br in self.plan_data_dict['edge_color_data_dict_facade']['blind_rooms']]
         for room_name, room_gravity in self.rooms_gravity_coord_dict.items():
             room_id = room_name.split('_')[1]
+            # if self.fenv_config['only_draw_room_gravity_points_flag'] and room_id in ['n', 'w', 'e', 's', '2', '3', '4', '5']:
+            #     continue
             if room_id in self.plan_data_dict['facades_blocked']:
                 marker = 'x'
                 mew = 5
                 ms = 15
                 color = 'darkgray'
-            elif room_id in blind_rooms_str:
+            elif self.fenv_config['adaptive_window'] and room_id in blind_rooms_str:
                 marker = '+'
                 mew = 5
                 ms = 15
@@ -655,6 +541,8 @@ class RenderPlan:
                 ms = self.room_centroid_marker_size
                 color = self.room_colors[room_name] 
                 
+            if self.fenv_config['only_draw_room_gravity_points_flag'] and room_id in ['n', 'w', 'e', 's', '2', '3', '4', '5']:
+                color = 'white'
                 
             if self.fenv_config['show_edges_for_fake_rooms_flag']:
                 self.ax.plot([room_gravity[0]], [room_gravity[1]], 
@@ -753,8 +641,8 @@ class RenderPlan:
                                                 path_effects.Normal()]
                                   )
                     except:
-                        print("in render_plan.py edge seems to have node 0")
-                        raise ValueError("in render_plan.py edge seems to have node 0")
+                        np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_1.npy", self.plan_data_dict)
+                        raise ValueError("In render_plan.py edge seems to have node 0. plan_id is: {self.plan_data_dict['plan_id']}")
                         
                         
                         
@@ -827,18 +715,81 @@ class RenderPlan:
     def _save_the_plan(self, fig, name='layout'):
         results_dir = self.fenv_config['results_dir']
         self.trial = 0 if 'trial' not in self.fenv_config.keys() else self.fenv_config['trial']
-        if 'plan_id' in self.plan_data_dict.keys():
-            plan_id = self.plan_data_dict['plan_id']
-        else:
-            plan_id = f"{datetime.datetime.now().strftime('%Y_%m_%d_%H%M')}"
+        # if 'plan_id' in self.plan_data_dict.keys():
+        #     plan_id = self.plan_data_dict['plan_id']
+        # else:
+        plan_id = datetime.datetime.now().strftime('%Y_%m_%d_%H%M_%S_%f')[:22]  # Truncate to get milliseconds
+        
         plan_fig_path = os.path.join(results_dir, f"pid_{plan_id}__{name}__tr_{self.trial}__ep_{self.episode:02}__ts_{self.ep_time_step:02}.png")
         # fig.savefig(plan_fig_path, bbox_extra_artists=(lgd,), bbox_inches='tight')
         fig.savefig(plan_fig_path, bbox_inches='tight')
+        return plan_fig_path
         
         
         
 
+    def portray(self, plan_data_dict, episode, ep_time_step):
+        self.plan_data_dict = plan_data_dict
+        self.episode = episode
+        self.ep_time_step = ep_time_step + 1
+        
+        
+        self.wall_colors, self.room_colors = get_color_dict(self.fenv_config)
+        
+        
+        arr = copy.deepcopy(plan_data_dict['obs_rooms_cmap'])
+        arr[arr<=5] = 0
+        
+        # Get unique rooms
+        rooms = np.unique(arr)[1:]
+        self.room_colors.update({
+            'room_10': 'brown'
+            })
+        
+        colors = [self.room_colors[f"room_{r}"] for r in rooms]
+        
+        arr = np.kron(arr, np.ones((32, 32), dtype=arr.dtype))
+        
 
+        # Generate color image  
+        colored = label2rgb(arr, colors=colors, bg_label=0, bg_color=(1,1,1), alpha=0.5)
+        # im = Image.fromarray(np.uint8(colored*255)).convert('RGB')
+        # im.show()
+        
+
+        # Find contours for each room
+        arr = np.transpose(arr)
+        contours = []
+        for room in rooms:
+          contours.append(find_contours(arr==room, 0.99999)[0])
+        
+        # convert countours to polygons
+        polygons = []
+        for c in contours:
+          # Close contour into ring
+          ring = LinearRing(c) 
+          # Simplify coordinates
+          simplified = shapely.simplify(ring, tolerance=2)
+          # Create polygon 
+          poly = Polygon(simplified)
+          polygons.append(poly)
+        
+        
+        # Plot
+        fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
+        ax.imshow(colored)
+        for poly in polygons:
+          x, y = poly.exterior.xy
+          ax.plot(x, y, color='black', linewidth=2)
+
+        ax.set_axis_off()
+        plt.show()
+        
+        if self.fenv_config['save_render_flag']: self._save_the_plan(fig, name='portray')
+        
+        
+        
+        
 #%%
 class DisplayPlan:
     def __init__(self, fenv_config):
@@ -869,7 +820,7 @@ class DisplayPlan:
         
         rw = copy.deepcopy(plan_data_dict['obs_rooms_cmap'])
         
-        rw[rw <= 4] = 0
+        rw[rw <= 5] = 0
         for r, c in plan_data_dict['extended_entrance_positions'][2:]:
             rw[r][c] = self.fenv_config['entrance_cell_id'] * 2
             
@@ -923,7 +874,7 @@ class DisplayPlan:
         self.episode = episode
         self.ep_time_step = ep_time_step + 1
         obs_arr_conv = copy.deepcopy(plan_data_dict['obs_canvas_arr_1ch'])
-        obs_arr_conv = np.moveaxis(obs_arr_conv, 0, -1)
+        # obs_arr_conv = np.moveaxis(obs_arr_conv, 0, -1)
         ep_time_step += 1
         
         fig = plt.figure(figsize=self.figsize)
@@ -935,15 +886,31 @@ class DisplayPlan:
         
 
         
+    def _get_canvas_cnn_3d(self, plan_data_dict):
+        obs_moving_labels_refined = copy.deepcopy(plan_data_dict['obs_moving_labels_refined']) 
+        obs_canvas_arr_3ch = np.zeros((obs_moving_labels_refined.shape[0], obs_moving_labels_refined.shape[1], 3), dtype=obs_moving_labels_refined.dtype)
+            
+        for r in range(obs_moving_labels_refined.shape[0]): #self.fenv_config['n_rows']*self.fenv_config['cnn_scaling_factor']):
+            for c in range(obs_moving_labels_refined.shape[1]): #range(self.fenv_config['n_cols']*self.fenv_config['cnn_scaling_factor']):
+                for v in list(self.fenv_config['color_map'].keys()):
+                    if obs_moving_labels_refined[r, c] == v:
+                        obs_canvas_arr_3ch[r, c, :] = list(  name_to_rgb(self.fenv_config['color_map'][v])  )
+                        
+        obs_canvas_arr_3ch = obs_canvas_arr_3ch.astype(np.uint8)
+        return obs_canvas_arr_3ch
+    
+    
+    
     def show_3d_obs(self, plan_data_dict, episode, ep_time_step):
         self.episode = episode
         self.ep_time_step = ep_time_step + 1
-        obs_arr_conv = copy.deepcopy(plan_data_dict['obs_canvas_arr_3ch']/255.0)
-        obs_arr_conv = np.moveaxis(obs_arr_conv, 0, -1)
         ep_time_step += 1
         
+        obs_canvas_arr_3ch = self._get_canvas_cnn_3d(plan_data_dict) / 255.0
+        assert obs_canvas_arr_3ch.shape[-1] == 3, "For showing an image the 3rd dim should be color channel"
+            
         fig = plt.figure(figsize=self.figsize)
-        plt.imshow(obs_arr_conv)
+        plt.imshow(obs_canvas_arr_3ch)
         
         for bf in plan_data_dict['facades_blocked']:
             plt.plot(self.blocked_facade_coord[bf][0]*2, self.blocked_facade_coord[bf][1]*2, marker='x', mew=5, ms=15, c='red')
@@ -961,7 +928,7 @@ class DisplayPlan:
         self.episode = episode
         self.ep_time_step = ep_time_step + 1
         stacked_3d = np.concatenate((plan_data_dict['obs_canvas_arr_1ch'], plan_data_dict['obs_rooms_cmap_1ch'], np.ones(plan_data_dict['obs_rooms_cmap_1ch'].shape, dtype=float)))
-        stacked_3d = np.moveaxis(stacked_3d, 0, -1)
+        # stacked_3d = np.moveaxis(stacked_3d, 0, -1)
         
         fig = plt.figure(figsize=self.figsize)
         plt.imshow(stacked_3d)

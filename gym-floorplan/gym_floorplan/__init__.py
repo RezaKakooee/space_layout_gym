@@ -14,7 +14,7 @@ def _register(id, entry_point, force=True):
 
 # Register modified versions of existing environments
 _register(
-    id="DOLW-v0",
-    entry_point="gym_floorplan.envs.master_env:MasterEnv",
+    id="SpaceLayoutGym-v0",
+    entry_point="gym_floorplan.envs.master_env:SpaceLayoutGym",
 )
 

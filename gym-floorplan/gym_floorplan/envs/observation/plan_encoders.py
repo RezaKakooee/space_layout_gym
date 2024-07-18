@@ -1,879 +1,776 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Mon Mar  6 18:13:08 2023
+Created on Sat Feb 24 00:53:46 2024
 
-@author: rdbt
+@author: Reza Kakooee
 """
 
 
-#%%
+import numpy as np
 import torch
 import torch.nn as nn
-from torchvision import models
-# torch.autograd.set_detect_anomaly(True)
+import torch.nn.functional as F
+import torchvision.models as tvmodels
+
+from ray.rllib.models.torch.misc import SlimFC, SlimConv2d, normc_initializer
 
 
+def create_activation(name='relu'):
+    if name == "relu":
+        return nn.ReLU()
+    elif name == "elu":
+        return nn.ELU()
+    else:
+        raise ValueError(f"Unsupported activation function: {name}")
+        
+def get_linear_layer(name='nn.Linear'):
+    if name == 'SlimFC':
+        return SlimFC
+    else:
+        return nn.Linear
+    
+def get_conv2d_layer(name='nn.Conv2d'):
+    if name == 'SlimConv2d':
+        return SlimConv2d
+    else:
+        return nn.Conv2d
+    
+LinearLayer = get_linear_layer()
+
+Conv2dLayer = get_conv2d_layer()
+
+###############################################################################
+### Context Encoder ###########################################################
+###############################################################################
+
+### Plan Description ##########################################################
+class PlanDescriptionEmbEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(PlanDescriptionEmbEncoder, self).__init__()
+
+        self.cfg = cfg
+        self.hidden_dim = self.cfg['plan_desc_embedding_dim'] * 7
+        
+        # Embeddings
+        self.masked_corners_embedding = nn.Embedding(num_embeddings=self.cfg['maximum_num_masked_rooms']+1, embedding_dim=self.cfg['plan_desc_embedding_dim']) # 4
+        self.blocked_facades_embedding = nn.Embedding(num_embeddings=self.cfg['num_of_facades']+1, embedding_dim=self.cfg['plan_desc_embedding_dim']) # 4
+        self.entrance_directions_embedding = nn.Embedding(num_embeddings=self.cfg['num_of_facades']+1, embedding_dim=self.cfg['plan_desc_embedding_dim']) # 4
+        self.required_rooms_embedding = nn.Embedding(num_embeddings=self.cfg['maximum_num_real_rooms']+1, embedding_dim=self.cfg['plan_desc_embedding_dim']) # 9
+
+        self.masked_corners_lw_linear = LinearLayer(self.cfg['maximum_num_masked_rooms']*2, self.cfg['plan_desc_embedding_dim'])  # 8
+        self.entrance_coordinates_linear = LinearLayer(self.cfg['num_entrance_coords'], self.cfg['plan_desc_embedding_dim'])  # 8
+        self.masked_corners_facade_areas_linear = LinearLayer(self.cfg['maximum_num_masked_rooms'] + self.cfg['num_of_facades'], self.cfg['plan_desc_embedding_dim']) # 8
+
+        self.post_concat_normalizer = nn.LayerNorm(self.hidden_dim)
+
+        # Processing path with Dropout
+        self.mlp = nn.Sequential(
+            LinearLayer(self.hidden_dim, self.hidden_dim),
+            create_activation(self.cfg['activation_fn_name']),
+            LinearLayer(self.hidden_dim, self.hidden_dim),
+            nn.Dropout(p=self.cfg['plan_desc_drop']), 
+        )
+
+        self.last_linear = LinearLayer(self.hidden_dim, self.cfg['plan_desc_output_dim']) 
+
+        self.last_normalizer = nn.LayerNorm(self.cfg['plan_desc_output_dim']) # 32
 
 
-#%%
-class FcFeatureEncoder(nn.Module):
-    def __init__(self, feature_input_dim:int=4096, feature_hidden_dim:int=256, feature_output_dim:int=128):
-        super(FcFeatureEncoder, self).__init__()
-        
-        self.feature_input_dim = feature_input_dim
-        self.feature_hidden_dim = feature_hidden_dim
-        self.feature_output_dim = feature_output_dim
-       
-        self.feature_net_inp_layer = nn.Sequential(
-            nn.Linear(self.feature_input_dim, 2*self.feature_hidden_dim),
-            nn.ReLU(),
-            )
-        
-        self.feature_net_1 = nn.Sequential(
-            nn.Linear(2*self.feature_hidden_dim, 2*self.feature_hidden_dim),
-            )
-            
-            
-        self.feature_net_2 = nn.Sequential(    
-            nn.Linear(2*self.feature_hidden_dim, self.feature_hidden_dim),
-            nn.ReLU(),
-            )
-    
-        self.feature_net_3 = nn.Sequential(
-            nn.Linear(self.feature_hidden_dim, self.feature_output_dim),
-            )
-        
-        
-    
-    def forward(self, wall_state_vector):
-        inp = self.feature_net_inp_layer(wall_state_vector)
-        
-        feature_net_1_out = self.feature_net_1(inp)
-        feature_net_1_out += inp
-        feature_net_1_out = nn.ReLU()(feature_net_1_out)
-        
-        feature_net_2_out = self.feature_net_2(feature_net_1_out)
-        
-        feature_net_3_out = self.feature_net_3(feature_net_2_out)
-        feature_net_3_out += feature_net_2_out
-        feature_net_out = nn.ReLU()(feature_net_3_out)
-        
-        # feature_net_out = self.feature_net_4(feature_net_3_out)
-        return feature_net_out
-    
-    
-    
-    
-#%%
-class CnnFeatureEncoder(nn.Module):
-    def __init__(self, feature_input_dim:int=256, feature_output_dim:int=256, cnn_scaling_factor:int=2):
-        super(CnnFeatureEncoder, self).__init__()
-        
-        self.feature_input_dim = feature_input_dim
-        self.feature_output_dim = feature_output_dim
-        
-        self.dropout_prob = 0.5
-        
-        self.feature_net_inp_layer = nn.Conv2d(self.feature_input_dim, 16, kernel_size=5, stride=1, padding=2) 
-        
-        # stride_2 = cnn_scaling_factor
-        self.feature_net_1 = nn.Sequential(
-            nn.Conv2d(16, 16, kernel_size=5, stride=1, padding=0),
-            # nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.Dropout2d(p=self.dropout_prob),
-            nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=0),
-            # nn.BatchNorm2d(32),
-            nn.ReLU(),
-            )
-        
-        self.feature_net_2 = nn.Sequential(
-            nn.Conv2d(32, 32, kernel_size=5, stride=1, padding=0),
-            # nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Dropout2d(p=self.dropout_prob),
-            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=0),
-            # nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Dropout2d(p=self.dropout_prob),
-            )
-        
-        self.feature_net_3 = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
-            # nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Dropout2d(p=self.dropout_prob),
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=0),
-            # nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.Dropout2d(p=self.dropout_prob),
-            )
-        
-        self.flatten = nn.Sequential(
-            nn.Flatten(),
-            )
-        
-        self.feature_net_out_layer = nn.Sequential(
-            nn.Linear(512, self.feature_output_dim),
-            nn.ReLU(),
-            nn.Dropout2d(p=self.dropout_prob),
-            )
-        
-        
-    def forward(self, plan_img):
-        inp = self.feature_net_inp_layer(plan_img)
-        features = self.feature_net_1(inp)
-        features = self.feature_net_2(features)
-        features = self.feature_net_3(features)
-        features = self.flatten(features)
-        feature_net_out = self.feature_net_out_layer(features)
-        return feature_net_out
-    
+    def forward(self, desc): # 45
+        desc_corners = (desc[:, :4]).long()
+        desc_facades = (desc[:, 4:8]).long()
+        desc_entrance = (desc[:, 8:12]).long()
+        desc_rooms = (desc[:, 12:21]).long()
+        desc_corners_lw = desc[:, 21:29]
+        desc_entrance_coords = desc[:, 29:37]
+        desc_corners_facade_areas = desc[:, 37:]
+
+        corner_embeds = self.masked_corners_embedding(desc_corners).mean(dim=1, keepdim=False)
+        facade_embeds = self.blocked_facades_embedding(desc_facades).mean(dim=1, keepdim=False)
+        entrance_embeds = self.entrance_directions_embedding(desc_entrance).mean(dim=1, keepdim=False)
+        room_embeds = self.required_rooms_embedding(desc_rooms).mean(dim=1, keepdim=False)
+
+        masked_corner_lw_embeds = self.masked_corners_lw_linear(desc_corners_lw)
+        entrance_coords_embeds = self.entrance_coordinates_linear(desc_entrance_coords)
+        masked_corners_facade_areas_embeds = self.masked_corners_facade_areas_linear(desc_corners_facade_areas)
+
+        embeds = torch.cat([corner_embeds, facade_embeds, entrance_embeds, room_embeds, 
+                            masked_corner_lw_embeds, entrance_coords_embeds, masked_corners_facade_areas_embeds], dim=-1)
+
+        mlp_x = self.post_concat_normalizer(embeds)
+        mlp_y = self.mlp(mlp_x)
+        skip = mlp_x + mlp_y
+        out = self.last_normalizer(self.last_linear(skip))
+        return out # 32
     
 
+
+class PlanDescriptionLinEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(PlanDescriptionLinEncoder, self).__init__()
+
+        self.cfg = cfg
+        
+        # Embeddings
+        self.masked_corners_embedding = LinearLayer(self.cfg['maximum_num_masked_rooms'], self.cfg['plan_desc_embedding_dim']) # 16
+        self.blocked_facades_embedding = LinearLayer(self.cfg['num_of_facades'], self.cfg['plan_desc_embedding_dim']) # 16
+        self.entrance_directions_embedding = LinearLayer(self.cfg['num_of_facades'], self.cfg['plan_desc_embedding_dim']) # 16
+        self.required_rooms_embedding = LinearLayer(self.cfg['maximum_num_real_rooms'], self.cfg['plan_desc_embedding_dim']) # 16
+
+        self.masked_corners_lw_linear = LinearLayer(self.cfg['maximum_num_masked_rooms']*2, self.cfg['plan_desc_embedding_dim']*2)  # 16*2
+        self.entrance_coordinates_linear = LinearLayer(self.cfg['num_entrance_coords'], self.cfg['plan_desc_embedding_dim']*2)  # 16*2
+        self.masked_corners_facade_areas_linear = LinearLayer(self.cfg['maximum_num_masked_rooms'] + self.cfg['num_of_facades'], self.cfg['plan_desc_embedding_dim']*2) # 16*2
+
+        self.concatenated_vector_size = self.cfg['plan_desc_embedding_dim'] * 10
+        self.post_concat_normalizer = nn.LayerNorm(self.concatenated_vector_size)
+
+        self.pre_mlp_linear = LinearLayer(self.concatenated_vector_size, self.cfg['plan_desc_hidden_dim'])
+
+        # Processing path with Dropout
+        self.mlp = nn.Sequential(
+            LinearLayer(self.cfg['plan_desc_hidden_dim'], self.cfg['plan_desc_hidden_dim']),
+            create_activation(self.cfg['activation_fn_name']),
+            LinearLayer(self.cfg['plan_desc_hidden_dim'], self.cfg['plan_desc_hidden_dim']),
+            nn.Dropout(p=self.cfg['plan_desc_drop']), 
+        )
+
+        self.last_linear = LinearLayer(self.cfg['plan_desc_hidden_dim'], self.cfg['plan_desc_output_dim']) 
+
+        self.last_normalizer = nn.LayerNorm(self.cfg['plan_desc_output_dim']) # 128
+
+
+    def forward(self, desc): # 45
+        desc_corners = (desc[:, :4])#.long()
+        desc_facades = (desc[:, 4:8])#.long()
+        desc_entrance = (desc[:, 8:12])#.long()
+        desc_rooms = (desc[:, 12:21])#.long()
+        desc_corners_lw = desc[:, 21:29]
+        desc_entrance_coords = desc[:, 29:37]
+        desc_corners_facade_areas = desc[:, 37:]
+
+        corner_embeds = self.masked_corners_embedding(desc_corners)
+        facade_embeds = self.blocked_facades_embedding(desc_facades)
+        entrance_embeds = self.entrance_directions_embedding(desc_entrance)
+        room_embeds = self.required_rooms_embedding(desc_rooms)
+
+        masked_corner_lw_embeds = self.masked_corners_lw_linear(desc_corners_lw)
+        entrance_coords_embeds = self.entrance_coordinates_linear(desc_entrance_coords)
+        masked_corners_facade_areas_embeds = self.masked_corners_facade_areas_linear(desc_corners_facade_areas)
+
+        embeds = torch.cat([corner_embeds, facade_embeds, entrance_embeds, room_embeds, 
+                            masked_corner_lw_embeds, entrance_coords_embeds, masked_corners_facade_areas_embeds], dim=-1)
+
+        embeds = self.post_concat_normalizer(embeds)
+        mlp_x = self.pre_mlp_linear(embeds)
+        mlp_y = self.mlp(mlp_x)
+        skip = mlp_x + mlp_y
+        out = self.last_normalizer(self.last_linear(skip))
+        return out # 32
+
+
+### Geometry Encoder ##########################################################
+class AreaProportionEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(AreaProportionEncoder, self).__init__()
+        
+        self.cfg = cfg
+
+        self.area_embeddings = LinearLayer(self.cfg['area_input_dim'], self.cfg['area_embedding_dim']) # 64
+        self.proportion_embeddings = LinearLayer(self.cfg['prop_input_dim'], self.cfg['prop_embedding_dim']) # 64
+
+        self.concatenated_vector_size = self.cfg['area_embedding_dim'] + self.cfg['prop_embedding_dim'] # 64*2
+        self.post_concat_normalizer = nn.LayerNorm(self.concatenated_vector_size)
+
+        self.pre_mlp_linear = LinearLayer(self.concatenated_vector_size, self.cfg['area_prop_hidden_dim'])
+        
+        self.mlp = nn.Sequential(
+            LinearLayer(self.cfg['area_prop_hidden_dim'], self.cfg['area_prop_hidden_dim']),
+            create_activation(self.cfg['activation_fn_name']),
+            LinearLayer(self.cfg['area_prop_hidden_dim'], self.cfg['area_prop_hidden_dim']),
+            nn.Dropout(p=self.cfg['area_prop_drop']), 
+        )
+        
+        self.last_linear = LinearLayer(self.cfg['area_prop_hidden_dim'], self.cfg['area_prop_output_dim'])
+        self.last_normalizer = nn.LayerNorm(self.cfg['area_prop_output_dim'])
    
-#%%
-class PlanDescriptionEncoder(nn.Module):
-    def __init__(self, plan_desc_one_hot_input_dim:int=30, plan_desc_continous_input_dim:int=16, plan_desc_hidden_dim:int=16, plan_desc_output_dim:int=32):
-        super(PlanDescriptionEncoder, self).__init__()
-        
-        self.plan_desc_one_hot_input_dim = plan_desc_one_hot_input_dim
-        self.plan_desc_continous_input_dim = plan_desc_continous_input_dim
-        self.plan_desc_hidden_dim = plan_desc_hidden_dim
-        self.plan_desc_output_dim = plan_desc_output_dim 
-        
-        self.plan_desc_net_one_hot_inp_layer = nn.Sequential(
-            nn.Linear(plan_desc_one_hot_input_dim, plan_desc_hidden_dim),
-            nn.ReLU()
-            )
-        self.plan_desc_net_continous_inp_layer = nn.Sequential(
-            nn.Linear(plan_desc_continous_input_dim, plan_desc_hidden_dim),
-            nn.ReLU()
-            )
-        
-        self.plan_desc_net_1 = nn.Sequential(
-            nn.Linear(plan_desc_hidden_dim*2, plan_desc_output_dim),
-            nn.ReLU(),
-            nn.Linear(plan_desc_output_dim, plan_desc_output_dim),
-            )
-        
-        self.plan_desc_net_2 = nn.Sequential(
-            nn.Linear(plan_desc_output_dim, plan_desc_output_dim),
-            nn.ReLU(),
-            nn.Linear(plan_desc_output_dim, plan_desc_output_dim),
-            )
     
-    
-    
-    def forward(self, plan_desc_state_vec):
-        inp_oh = self.plan_desc_net_one_hot_inp_layer(plan_desc_state_vec[:, :self.plan_desc_one_hot_input_dim]) #16
-        inp_co = self.plan_desc_net_continous_inp_layer(plan_desc_state_vec[:, self.plan_desc_one_hot_input_dim:]) #16
-        inp = torch.cat((inp_oh, inp_co), 1) #32
+    def forward(self, area_state_vec, proportion_state_vec): # 36
+        area_embeds = self.area_embeddings(area_state_vec) 
+        proportion_embeds = self.proportion_embeddings(proportion_state_vec)
+        embeds = torch.cat([area_embeds, proportion_embeds], dim=-1)
+        embeds = self.post_concat_normalizer(embeds)
+        mlp_x = self.pre_mlp_linear(embeds)
+        mlp_y = self.mlp(mlp_x)
+        skip = mlp_x + mlp_y
+        out = self.last_normalizer(self.last_linear(skip)) 
+        return out # 32
+
+
+### Topology Encoder ##########################################################
+class EdgeEmbEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(EdgeEmbEncoder, self).__init__()
+
+        self.cfg = cfg
+        self.hidden_dim = self.cfg['maximum_num_real_rooms'] * self.cfg['edge_embedding_dim'] # 72
         
-        plan_desc_net_out_1 = self.plan_desc_net_1(inp) #32
-        plan_desc_net_out_1 += inp
-        plan_desc_net_out_1 = nn.ReLU()(plan_desc_net_out_1)
+        # Create a separate embedding layer for each room
+        self.desired_room_embeddings = nn.ModuleList([
+            nn.Embedding(num_embeddings=self.cfg['max_rr_connections_per_room'] + 1, 
+                         embedding_dim=self.cfg['edge_embedding_dim']) for _ in range(self.cfg['maximum_num_real_rooms'])
+        ])
+
+        self.achieved_room_embeddings = nn.ModuleList([
+            nn.Embedding(num_embeddings=self.cfg['max_rr_connections_per_room'] + 1, 
+                         embedding_dim=self.cfg['edge_embedding_dim']) for _ in range(self.cfg['maximum_num_real_rooms'])
+        ])
         
-        plan_desc_net_out_2 = self.plan_desc_net_2(plan_desc_net_out_1) #32
-        plan_desc_net_out_2 += plan_desc_net_out_1
-        plan_desc_net_out = nn.ReLU()(plan_desc_net_out_2)
+        self.achieved_facade_embeddings = nn.ModuleList([
+            nn.Embedding(num_embeddings=self.cfg['max_rf_connections_per_room'] + 1, 
+                         embedding_dim=self.cfg['edge_embedding_dim']) for _ in range(self.cfg['maximum_num_real_rooms'])
+        ])
+
+        # self.desired facade []
+        self.post_concat_normalizer = nn.LayerNorm(2*self.hidden_dim)
         
-        return plan_desc_net_out 
-    
-    
-    
-    
-#%%
-class AreaEncoder(nn.Module):
-    def __init__(self, area_input_dim:int=36, area_hidden_dim:int=32, area_output_dim:int=32):
-        super(AreaEncoder, self).__init__()
+        self.post_concat_linear = LinearLayer(2*self.hidden_dim, self.hidden_dim)
         
-        self.area_input_dim = area_input_dim
-        self.area_hidden_dim = area_hidden_dim
-        self.area_output_dim = area_output_dim 
+        self.mlp = nn.Sequential(
+            LinearLayer(self.hidden_dim, self.hidden_dim),
+            create_activation(self.cfg['activation_fn_name']),
+            LinearLayer(self.hidden_dim, self.hidden_dim),
+            nn.Dropout(p=self.cfg['edge_drop']), 
+        )
         
-        self.area_net_inp_layer = nn.Sequential(
-            nn.Linear(area_input_dim, area_hidden_dim),
-            nn.ReLU()
-            )
+        self.last_linear = LinearLayer(self.hidden_dim, self.cfg['edge_output_dim'])
+        self.last_normalizer = nn.LayerNorm(self.cfg['edge_output_dim'])
+
+
+    def forward(self, edge_state_vec): # 171
+        desired_room_connections = (edge_state_vec[:, :self.cfg['maximum_num_real_rooms']**2]).reshape(-1, self.cfg['maximum_num_real_rooms'], self.cfg['maximum_num_real_rooms'])
+        achieved_room_connections = (edge_state_vec[:, self.cfg['maximum_num_real_rooms']**2:2*self.cfg['maximum_num_real_rooms']**2]).reshape(-1, self.cfg['maximum_num_real_rooms'], self.cfg['maximum_num_real_rooms'])
+        # edge_state_vec.shape[-1]-self.cfg['maximum_num_real_rooms']
+        achieved_room_facade_connections = (edge_state_vec[:, 2*self.cfg['maximum_num_real_rooms']**2:]).reshape(-1, self.cfg['maximum_num_real_rooms'], self.cfg['num_of_facades'])
         
-        self.area_net_1 = nn.Sequential(
-            nn.Linear(area_hidden_dim, area_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(area_hidden_dim, area_hidden_dim),
-            )
+        rr_aggregated_embeddings = []
+        for i in range(self.cfg['maximum_num_real_rooms']):
+            desired_emb = self.desired_room_embeddings[i]((desired_room_connections[:, i]).long())
+            desired_agg_emb = torch.mean(desired_emb, dim=1)
         
-        self.area_net_2 = nn.Sequential(
-            nn.Linear(area_hidden_dim, area_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(area_hidden_dim, area_output_dim),
-            )
-    
-    
-    
-    def forward(self, area_state_vec):
-        inp = self.area_net_inp_layer(area_state_vec) #32
-        
-        area_net_out_1 = self.area_net_1(inp) #32
-        area_net_out_1 += inp #32
-        area_net_out_1 = nn.ReLU()(area_net_out_1)
-        
-        area_net_out_2 = self.area_net_2(area_net_out_1) #32
-        area_net_out_2 += area_net_out_1 #32
-        area_net_out = nn.ReLU()(area_net_out_2)
-        
-        return area_net_out 
-    
+            achieved_emb = self.achieved_room_embeddings[i]((achieved_room_connections[:, i]).long())
+            achieved_agg_emb = torch.mean(achieved_emb, dim=1)
+            
+            room_emb = desired_agg_emb + achieved_agg_emb 
+            rr_aggregated_embeddings.append(room_emb)
+            
+        rf_aggregated_embeddings = []
+        for i in range(self.cfg['maximum_num_real_rooms']):
+            fachieved_emb = self.achieved_facade_embeddings[i]((achieved_room_facade_connections[:, i]).long())
+            fachieved_agg_emb = torch.mean(fachieved_emb, dim=1)
+            
+            rf_aggregated_embeddings.append(fachieved_agg_emb)
+            
+        rr_embeds = torch.cat(rr_aggregated_embeddings, dim=1).to(edge_state_vec.device) # 32*72 st: 23=batch_size, 72 = 9*8=n_rooms*n_emd
+        rf_embeds = torch.cat(rf_aggregated_embeddings, dim=1).to(edge_state_vec.device)
+        rrf_embeds = torch.cat([rr_embeds, rf_embeds], dim=1)
+        rrf_embeds = self.post_concat_normalizer(rrf_embeds)
+        mlp_x = self.post_concat_linear(rrf_embeds)
+        mlp_y = self.mlp(mlp_x)
+        skip = mlp_x + mlp_y
+        out = self.last_normalizer(self.last_linear(skip)) 
+        return out # 64
 
 
 
-#%%
-class ProportionEncoder(nn.Module):
-    def __init__(self, proportion_input_dim:int=18, proportion_hidden_dim:int=16, proportion_output_dim:int=16):
-        super(ProportionEncoder, self).__init__()
-        
-        self.proportion_input_dim = proportion_input_dim
-        self.proportion_hidden_dim = proportion_hidden_dim
-        self.proportion_output_dim = proportion_output_dim 
-        
-        self.proportion_net_inp_layer = nn.Sequential(
-            nn.Linear(proportion_input_dim, proportion_hidden_dim),
-            nn.ReLU()
-            )
-        
-        self.proportion_net_1 = nn.Sequential(
-            nn.Linear(proportion_hidden_dim, proportion_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(proportion_hidden_dim, proportion_hidden_dim),
-            )
-        
-        self.proportion_net_2 = nn.Sequential(
-            nn.Linear(proportion_hidden_dim, proportion_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(proportion_hidden_dim, proportion_output_dim),
-            )
-    
-    
-    
-    def forward(self, proportion_state_vec):
-        inp = self.proportion_net_inp_layer(proportion_state_vec) #16
-        
-        proportion_net_out_1 = self.proportion_net_1(inp) #16
-        proportion_net_out_1 += inp #16
-        proportion_net_out_1 = nn.ReLU()(proportion_net_out_1)
-        
-        proportion_net_out_2 = self.proportion_net_2(proportion_net_out_1) #16
-        proportion_net_out_2 += proportion_net_out_1 #16
-        proportion_net_out = nn.ReLU()(proportion_net_out_2)
-        
-        return proportion_net_out 
-    
-    
-    
+class EdgeLinEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(EdgeLinEncoder, self).__init__()
 
-#%%
-class EdgeEncoder(nn.Module):
-    def __init__(self, edge_input_dim:int=81, edge_hidden_dim:int=64, edge_output_dim:int=64):
-        super(EdgeEncoder, self).__init__()
+        self.cfg = cfg
         
-        self.edge_input_dim = edge_input_dim
-        self.edge_hidden_dim = edge_hidden_dim
-        self.edge_output_dim = edge_output_dim
+        # Create a separate embedding layer for each room
+        self.desired_room_embeddings = nn.ModuleList([
+            LinearLayer(self.cfg['max_rr_connections_per_room'], 
+                      self.cfg['edge_embedding_dim']) for _ in range(self.cfg['maximum_num_real_rooms'])
+        ])
+
+        self.achieved_room_embeddings = nn.ModuleList([
+            LinearLayer(self.cfg['max_rr_connections_per_room'], 
+                         self.cfg['edge_embedding_dim']) for _ in range(self.cfg['maximum_num_real_rooms'])
+        ])
         
-        self.edge_net_inp_layer = nn.Sequential(
-            nn.Linear(edge_input_dim, edge_hidden_dim),
-            nn.ReLU()
-            )
+        self.achieved_facade_embeddings = nn.ModuleList([
+            LinearLayer(self.cfg['max_rf_connections_per_room'], 
+                         self.cfg['edge_embedding_dim']) for _ in range(self.cfg['maximum_num_real_rooms'])
+        ])
+
+        self.concatenated_vector_size = self.cfg['maximum_num_real_rooms'] * self.cfg['edge_embedding_dim'] * 2  # 9*16*2
+        self.post_concat_normalizer = nn.LayerNorm(self.concatenated_vector_size)
         
-        self.edge_net_1 = nn.Sequential(
-            nn.Linear(edge_hidden_dim, edge_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(edge_hidden_dim, edge_hidden_dim),
-            )
+        self.pre_mlp_linear = LinearLayer(self.concatenated_vector_size, self.cfg['edge_hidden_dim'])
         
-        self.edge_net_2 = nn.Sequential(
-            nn.Linear(edge_hidden_dim, edge_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(edge_hidden_dim, edge_output_dim),
-            )
-    
-    
-    
-    def forward(self, edge_state_vec):
-        inp = self.edge_net_inp_layer(edge_state_vec) #64
+        self.mlp = nn.Sequential(
+            LinearLayer(self.cfg['edge_hidden_dim'], self.cfg['edge_hidden_dim']),
+            create_activation(self.cfg['activation_fn_name']),
+            LinearLayer(self.cfg['edge_hidden_dim'], self.cfg['edge_hidden_dim']),
+            nn.Dropout(p=self.cfg['edge_drop']), 
+        )
         
-        edge_net_out_1 = self.edge_net_1(inp) #64
-        edge_net_out_1 += inp #64
-        edge_net_out_1 = nn.ReLU()(edge_net_out_1)
-        
-        edge_net_out_2 = self.edge_net_2(edge_net_out_1) #64
-        edge_net_out_2 += inp #64
-        edge_net_out = nn.ReLU()(edge_net_out_2)
-        
-        return edge_net_out  
+        self.last_linear = LinearLayer(self.cfg['edge_hidden_dim'], self.cfg['edge_output_dim'])
+        self.last_normalizer = nn.LayerNorm(self.cfg['edge_output_dim'])
 
 
-
-
-#%%
-class MetaEncoder(nn.Module):
-    def __init__(self, meta_input_dim:int=144, meta_hidden_dim:int=128, meta_output_dim:int=128):
-        super(MetaEncoder, self).__init__()
+    def forward(self, edge_state_vec): # 171
+        desired_room_connections = (edge_state_vec[:, :self.cfg['maximum_num_real_rooms']**2]).reshape(-1, self.cfg['maximum_num_real_rooms'], self.cfg['maximum_num_real_rooms'])
+        achieved_room_connections = (edge_state_vec[:, self.cfg['maximum_num_real_rooms']**2:2*self.cfg['maximum_num_real_rooms']**2]).reshape(-1, self.cfg['maximum_num_real_rooms'], self.cfg['maximum_num_real_rooms'])
+        # edge_state_vec.shape[-1]-self.cfg['maximum_num_real_rooms']
+        achieved_room_facade_connections = (edge_state_vec[:, 2*self.cfg['maximum_num_real_rooms']**2:]).reshape(-1, self.cfg['maximum_num_real_rooms'], self.cfg['num_of_facades'])
         
-        self.meta_input_dim = meta_input_dim
-        self.meta_hidden_dim = meta_hidden_dim
-        self.meta_output_dim = meta_output_dim
+        rr_aggregated_embeddings = []
+        for i in range(self.cfg['maximum_num_real_rooms']):
+            desired_emb = self.desired_room_embeddings[i]((desired_room_connections[:, i]))
+            # desired_emb = torch.mean(desired_emb, dim=1)
         
-        self.dropout_prob = 0.5
-        
-        self.meta_net_inp_layer = nn.Sequential(
-            nn.Linear(meta_input_dim, meta_hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(p=self.dropout_prob),
-            )
-        
-        self.meta_net_1 = nn.Sequential(
-            nn.Linear(meta_hidden_dim, meta_hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(p=self.dropout_prob),
-            nn.Linear(meta_hidden_dim, meta_hidden_dim),
-            )
-        
-        self.meta_net_2 = nn.Sequential(
-            nn.Linear(meta_hidden_dim, meta_hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(p=self.dropout_prob),
-            nn.Linear(meta_hidden_dim, meta_hidden_dim),
-            )
-        
-        
-        
-    def forward(self, plan_desc_net_out, area_net_out, proportion_net_out, edge_net_out):
-        pape = torch.cat((plan_desc_net_out, area_net_out, proportion_net_out, edge_net_out), 1)
-        inp = self.meta_net_inp_layer(pape) #128
-        
-        meta_net_out_1 = self.meta_net_1(inp) #128
-        meta_net_out_1 += inp #128
-        meta_net_out_1 = nn.ReLU()(meta_net_out_1)
-        
-        meta_net_out_2 = self.meta_net_2(meta_net_out_1) #128
-        meta_net_out_2 += meta_net_out_1 #128
-        meta_net_out = nn.ReLU()(meta_net_out_2)
-        
-        return meta_net_out
-    
-    
-    
-
-#%%
-class FeatureAndMetaEncoder(nn.Module):
-    def __init__(self, feature_output_dim:int=256, meta_output_dim:int=128, latent_hidden_dim:int=256, latent_out_dim:int=256, fenv_config:dict={}):
-        super(FeatureAndMetaEncoder, self).__init__()
-        
-        self.feature_output_dim = feature_output_dim
-        self.meta_output_dim = meta_output_dim
-        self.latent_hidden_dim = latent_hidden_dim
-        self.latent_out_dim = latent_out_dim
-        
-        self.fenv_config = fenv_config
-        
-        self.dropout_prob = 0.5
-        
-        self.feat_mata_concat_layer = nn.Sequential(
-            nn.Linear(feature_output_dim+meta_output_dim, latent_hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(p=self.dropout_prob),
-            )
-        
-        self.feat_mata_output_layer_1 = nn.Sequential(
-            nn.Linear(latent_hidden_dim, latent_hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(p=self.dropout_prob),
-            nn.Linear(latent_hidden_dim, latent_out_dim),
-            )
-        
-        self.feat_mata_output_layer_2 = nn.Sequential(
-            nn.Linear(latent_hidden_dim, latent_hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(p=self.dropout_prob),
-            nn.Linear(latent_hidden_dim, latent_out_dim),
-            )
-        
-        
-        
-    def forward(self, feature_net_out, meta_net_out):
-        latent_in = torch.cat((feature_net_out, meta_net_out), 1) #256
-        inp = self.feat_mata_concat_layer(latent_in) #256
-        
-        latent_out_1 = self.feat_mata_output_layer_1(inp) #256
-        latent_out_1 += inp
-        latent_out_1 = nn.ReLU()(latent_out_1)
-        
-        latent_out_2 = self.feat_mata_output_layer_2(latent_out_1) #256
-        latent_out_2 += latent_out_1
-        latent_out = nn.ReLU()(latent_out_2)
-        
-        return latent_out
-    
-
-
-
-#%%
-class MetaFcEncoder(nn.Module):
-    def __init__(self, fenv_config):
-        super(MetaFcEncoder, self).__init__()
-        
-        self.fenv_config = fenv_config
-        
-        self.feature_input_dim = self.fenv_config['len_feature_state_vec']
-        self.feature_hidden_dim = 128
-        self.feature_output_dim = 128
-        
-        self.len_plan_state_vec = self.fenv_config['len_plan_state_vec']
-        self.len_plan_area_state_vec = self.fenv_config['len_plan_area_state_vec']
-        self.len_plan_area_prop_state_vec = self.fenv_config['len_plan_area_prop_state_vec']
-        
-        self.plan_desc_one_hot_input_dim = self.fenv_config['len_plan_state_vec_one_hot']
-        self.plan_desc_continous_input_dim = self.fenv_config['len_plan_state_vec_continous']
-        self.plan_desc_hidden_dim = 16
-        self.plan_desc_output_dim = 32
-        
-        self.area_input_dim = self.fenv_config['len_area_state_vec']
-        self.area_hidden_dim = 32
-        self.area_output_dim = 32
-        
-        self.proportion_input_dim = self.fenv_config['len_proportion_state_vec']
-        self.proportion_hidden_dim = 16
-        self.proportion_output_dim = 16
-        
-        self.edge_input_dim = self.fenv_config['len_adjacency_state_vec']
-        self.edge_hidden_dim = 64
-        self.edge_output_dim = 64
-        
-        self.meta_input_dim = self.plan_desc_output_dim + self.area_output_dim + self.proportion_output_dim + self.edge_output_dim
-        self.meta_hidden_dim = 128
-        self.meta_output_dim = 128
-        
-        self.latent_hidden_dim = self.feature_output_dim + self.meta_output_dim
-        self.latent_output_dim = 256
-        
-        self.linear_feature_net = FcFeatureEncoder(self.feature_input_dim, self.feature_hidden_dim, self.feature_output_dim)
-        self.plan_desc_encoder_net = PlanDescriptionEncoder(self.plan_desc_one_hot_input_dim, self.plan_desc_continous_input_dim, self.plan_desc_hidden_dim, self.plan_desc_output_dim)
-        self.area_encoder_net = AreaEncoder(self.area_input_dim, self.area_hidden_dim, self.area_output_dim)
-        self.proportion_encoder_net = ProportionEncoder(self.proportion_input_dim, self.proportion_hidden_dim, self.proportion_output_dim)
-        self.edge_encoder_net = EdgeEncoder(self.edge_input_dim, self.edge_hidden_dim, self.edge_output_dim)
-        self.meta_encoder_net = MetaEncoder(self.meta_input_dim, self.meta_hidden_dim, self.meta_output_dim)
-        self.feature_and_meta_net = FeatureAndMetaEncoder(self.feature_output_dim, self.meta_output_dim,
-                                                          self.latent_hidden_dim, self.latent_output_dim,
-                                                          self.fenv_config)
-        
+            achieved_emb = self.achieved_room_embeddings[i]((achieved_room_connections[:, i]))
+            # achieved_emb = torch.mean(achieved_emb, dim=1)
+            
+            room_emb = desired_emb + achieved_emb 
+            rr_aggregated_embeddings.append(room_emb)
+            
+        rf_aggregated_embeddings = []
+        for i in range(self.cfg['maximum_num_real_rooms']):
+            fachieved_emb = self.achieved_facade_embeddings[i]((achieved_room_facade_connections[:, i]))
+            # fachieved_emb = torch.mean(fachieved_emb, dim=1)
+            
+            rf_aggregated_embeddings.append(fachieved_emb)
+            
+        rr_embeds = torch.cat(rr_aggregated_embeddings, dim=1).to(edge_state_vec.device) # 32*72 st: 23=batch_size, 72 = 9*8=n_rooms*n_emd
+        rf_embeds = torch.cat(rf_aggregated_embeddings, dim=1).to(edge_state_vec.device)
+        rrf_embeds = torch.cat([rr_embeds, rf_embeds], dim=1)
+        rrf_embeds = self.post_concat_normalizer(rrf_embeds)
+        mlp_x = self.pre_mlp_linear(rrf_embeds)
+        mlp_y = self.mlp(mlp_x)
+        skip = mlp_x + mlp_y
+        out = self.last_normalizer(self.last_linear(skip)) 
+        return out # 64
 
     
-    def forward(self, real_obs):
-        feature_net_out = self.linear_feature_net(real_obs['observation_fc'])
-        plan_desc_net_out = self.plan_desc_encoder_net(real_obs['observation_meta'][:, :self.len_plan_state_vec])
-        area_net_out = self.area_encoder_net(real_obs['observation_meta'][:, self.len_plan_state_vec:self.len_plan_area_state_vec])
-        proportion_net_out= self.proportion_encoder_net(real_obs['observation_meta'][:, self.len_plan_area_state_vec:self.len_plan_area_prop_state_vec])
-        edge_net_out = self.edge_encoder_net(real_obs['observation_meta'][:, self.len_plan_area_prop_state_vec:])
-        meta_out = self.meta_encoder_net(plan_desc_net_out, area_net_out, proportion_net_out, edge_net_out)
-        latent_out = self.feature_and_meta_net(feature_net_out, meta_out)
-        return latent_out
-    
-    
+### Topology and Topology Encoder #############################################
+class GeometryTopologyEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(GeometryTopologyEncoder, self).__init__()
+        
+        self.cfg = cfg
+
+        self.pape_linear = LinearLayer(self.cfg['meta_input_dim'], self.cfg['meta_hidden_dim'])
+        self.pre_mlp_normalizer = nn.LayerNorm(self.cfg['meta_hidden_dim'])
+        self.mlp = nn.Sequential(
+            LinearLayer(self.cfg['meta_hidden_dim'], self.cfg['meta_hidden_dim']),
+            create_activation(self.cfg['activation_fn_name']),
+            LinearLayer(self.cfg['meta_hidden_dim'], self.cfg['meta_hidden_dim']),
+            nn.Dropout(p=self.cfg['meta_drop']), 
+        )
+
+        self.last_linear = LinearLayer(self.cfg['meta_hidden_dim'], self.cfg['meta_output_dim'])
+        self.last_normalizer = nn.LayerNorm(self.cfg['meta_output_dim'])
 
 
-#%%
-class TinyMetaFcEncoder(nn.Module):
-    def __init__(self, fenv_config):
-        super(TinyMetaFcEncoder, self).__init__()
+    def forward(self, plan_desc_encoder_feature, area_prop_encoder_feature, edge_encoder_feature): # 128
+        pape = torch.cat((plan_desc_encoder_feature, area_prop_encoder_feature, edge_encoder_feature), 1) # 32, 32, 64
+        embeds = self.pape_linear(pape)
+        mlp_x = self.pre_mlp_normalizer(embeds)
+        mlp_y = self.mlp(mlp_x)
+        skip = mlp_x + mlp_y
+        out = self.last_normalizer(self.last_linear(skip)) 
+        return out # 64
+    
+
+### Context Encoder #############################################
+class ContextEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(ContextEncoder, self).__init__()
+        self.cfg = cfg       
+
+        self.plan_desc_encoder = PlanDescriptionEmbEncoder(self.cfg) if self.cfg['encoding_type'] == 'EMB' else PlanDescriptionLinEncoder(self.cfg)
+        self.area_proportion_encoder = AreaProportionEncoder(self.cfg)
+        self.edge_encoder = EdgeEmbEncoder(self.cfg) if self.cfg['encoding_type'] == 'EMB' else EdgeLinEncoder(self.cfg)
+        self.geom_topo_encoder = GeometryTopologyEncoder(self.cfg)
         
-        self.fenv_config = fenv_config
+    
+    def forward(self, obs_meta): # 253
+        plan_desc = obs_meta[:, :self.cfg['len_plan_state_vec']]
+        area_state_vec = obs_meta[:, self.cfg['len_plan_state_vec']:self.cfg['len_plan_area_state_vec']]
+        proportion_state_vec = obs_meta[:, self.cfg['len_plan_area_state_vec']:self.cfg['len_plan_area_prop_state_vec']]
+        edge_state_vec = obs_meta[:, self.cfg['len_plan_area_prop_state_vec']:]
         
-        self.len_plan_state_vec = self.fenv_config['len_plan_state_vec']
-        self.len_plan_area_state_vec = self.fenv_config['len_plan_area_state_vec']
-        self.len_plan_area_prop_state_vec = self.fenv_config['len_plan_area_prop_state_vec']
+        plan_desc_encoder_feature = self.plan_desc_encoder(plan_desc.float())
+        area_prop_encoder_feature = self.area_proportion_encoder(area_state_vec, proportion_state_vec)
+        edge_encoder_feature = self.edge_encoder(edge_state_vec)
+        geom_topo_encoder_feature = self.geom_topo_encoder(plan_desc_encoder_feature, area_prop_encoder_feature, edge_encoder_feature)
+
+        return geom_topo_encoder_feature # 64
+    
+
+###############################################################################
+### Image Encoder #############################################################
+###############################################################################
+
+### TinyCnnAcEncoder ##########################################################
+class TinyCnnEncoder_dose_not_work_use_average_pooling(nn.Module):
+    def __init__(self, cfg):
+        super(TinyCnnEncoder, self).__init__()
         
-        self.feature_input_dim = self.fenv_config['len_feature_state_vec']
-        self.feature_hidden_dim = 256
-        self.feature_output_dim = 128
+        self.cfg = cfg
         
-        self.plan_desc_input_dim = 54
-        self.plan_desc_output_dim = 54
+        in_ch = self.cfg['n_channels']
+        cnn_scaling_factor = self.cfg['cnn_scaling_factor']
         
-        self.area_input_dim = 54
-        self.area_output_dim = 54
+        self.in_channels = [in_ch, 64, 128]
+        self.out_channels = [64, 128, 256]
+        self.kernels = [5, 5, 6]
+        self.strides = [2, 2, 1]
+        self.paddings = [2, 2, 0]
+        self.activation_fn_name = 'elu'
+
+        self.cnn = nn.Sequential(
+            Conv2dLayer(self.in_channels[0], self.out_channels[0], self.kernels[0], self.strides[0], self.paddings[0]),
+            create_activation(self.activation_fn_name),
+            Conv2dLayer(self.in_channels[1], self.out_channels[1], self.kernels[1], self.strides[1], self.paddings[1]),
+            create_activation(self.activation_fn_name),
+            Conv2dLayer(self.in_channels[2], self.out_channels[2], self.kernels[2], self.strides[2], self.paddings[2]),
+            create_activation(self.activation_fn_name),
+            # nn.Flatten(),
+        )
         
-        self.proportion_input_dim = 18
-        self.proportion_output_dim = 18
+        with torch.no_grad():
+            tensor_size = (1, 23*cnn_scaling_factor, 23*cnn_scaling_factor)
+            x = torch.as_tensor(np.random.rand(*tensor_size)).float()
+            z = self.cnn(x)
+            n_flatten = z.shape[1]
+            
+        self.last_layer = nn.Flatten() if n_flatten == 1 else nn.Sequential(nn.Flatten(), nn.Linear(n_flatten**2, 1), create_activation(self.activation_fn_name))
         
-        self.edge_input_dim = 81
-        self.edge_output_dim = 81
+        with torch.no_grad():
+            y = self.last_layer(z)
+            assert y.shape == torch.Size([256, 1]), "output shape has to be 256*1"
+
+    def forward(self, obs_cnn):
+        if obs_cnn.shape[3] in [1, 3]: 
+            obs_cnn = obs_cnn.permute(0, 3, 1, 2)
+        else:
+            assert obs_cnn.shape[1] in [1, 3], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
+
+        if obs_cnn.dtype != 'float':
+            obs_cnn = obs_cnn.float()
+        encoded_obs = self.cnn(obs_cnn)
+        encoded_obs = self.last_layer(encoded_obs)
+        return encoded_obs
+
+
+### TinyCnnAcEncoder ##########################################################
+class TinyCnnEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(TinyCnnEncoder, self).__init__()
         
-        self.pape_input_dim = 207
-        self.pape_output_dim = 207
+        self.cfg = cfg
         
-        self.meta_input_dim = 207
-        self.meta_output_dim = 128
+        in_ch = self.cfg['n_channels']
+        cnn_scaling_factor = self.cfg['cnn_scaling_factor']
         
-        self.latent_hidden_dim = 256
-        self.latent_output_dim = 256
+        self.in_channels = [in_ch, 64, 128]
+        self.out_channels = [64, 128, 256]
+        self.kernels = [5, 5, 6]
+        self.strides = [2, 2, 1]
+        self.paddings = [2, 2, 0]
+        self.activation_fn_name = 'elu'
+
+        self.cnn = nn.Sequential(
+            Conv2dLayer(self.in_channels[0], self.out_channels[0], self.kernels[0], self.strides[0], self.paddings[0]),
+            create_activation(self.activation_fn_name),
+            Conv2dLayer(self.in_channels[1], self.out_channels[1], self.kernels[1], self.strides[1], self.paddings[1]),
+            create_activation(self.activation_fn_name),
+            Conv2dLayer(self.in_channels[2], self.out_channels[2], self.kernels[2], self.strides[2], self.paddings[2]),
+            create_activation(self.activation_fn_name),
+        )
         
+        self.global_avg_pool = nn.AdaptiveAvgPool2d(1)
         
-        self.feature_encoder_inp_layers = nn.Sequential(
-            nn.Linear(self.feature_input_dim, self.feature_hidden_dim),
-            nn.Tanh(),
-            nn.Linear(self.feature_hidden_dim, self.feature_output_dim),
+
+    def forward(self, obs_cnn):
+        if obs_cnn.shape[3] in [1, 3]: 
+            obs_cnn = obs_cnn.permute(0, 3, 1, 2)
+        else:
+            assert obs_cnn.shape[1] in [1, 3], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
+
+        if obs_cnn.dtype != 'float':
+            obs_cnn = obs_cnn.float()
+        encoded_obs = self.cnn(obs_cnn)
+        encoded_obs = self.global_avg_pool(encoded_obs)
+        encoded_obs = encoded_obs.view(encoded_obs.size(0), -1)
+        return encoded_obs
+    
+### Custom Residual Cnn Encoder ###############################################
+class BasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(BasicBlock, self).__init__()
+        # First convolutional layer
+        self.conv1 = Conv2dLayer(in_channels, out_channels, 3, stride, 1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        # Second convolutional layer
+        self.conv2 = Conv2dLayer(out_channels, out_channels, 3, 1, 1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != self.expansion * out_channels:
+            self.shortcut = nn.Sequential(
+                Conv2dLayer(in_channels, self.expansion * out_channels, 1, stride),
+                nn.BatchNorm2d(self.expansion * out_channels)
             )
 
-        self.feature_encoder = nn.Sequential(
-            nn.Linear(self.feature_output_dim, self.feature_output_dim),
-            nn.Tanh(),
-            )
-        
-        
-        self.plan_encoder = nn.Linear(self.plan_desc_input_dim, self.plan_desc_output_dim)
-        
-        self.area_encoder = nn.Linear(self.area_input_dim, self.area_output_dim)
-        
-        self.proportion_encoder = nn.Linear(self.proportion_input_dim, self.proportion_output_dim)
-        
-        self.edge_encoder = nn.Linear(self.edge_input_dim, self.edge_output_dim)
-        
-        self.pape_encoder = nn.Linear(self.pape_input_dim, self.pape_output_dim)
-        
-        self.meta_encoder = nn.Linear(self.meta_input_dim, self.meta_output_dim)
-        
-        self.feat_meta_encoder = nn.Linear(self.latent_hidden_dim, self.latent_output_dim)
 
-        
-    
-    def forward(self, real_obs):
-        feat_in = self.feature_encoder_inp_layers(real_obs['observation_fc'])
-        feat = self.feature_encoder(feat_in)
-        
-        # Instead of using in-place addition, use addition with a new tensor
-        feat_sum = feat + feat_in
-        feat_tanh = nn.Tanh()(feat_sum)
-        
-        plan = self.plan_encoder(real_obs['observation_meta'][:, :self.len_plan_state_vec])
-        area = self.area_encoder(real_obs['observation_meta'][:, self.len_plan_state_vec:self.len_plan_area_state_vec])
-        prop = self.proportion_encoder(real_obs['observation_meta'][:, self.len_plan_area_state_vec:self.len_plan_area_prop_state_vec])
-        edge = self.edge_encoder(real_obs['observation_meta'][:, self.len_plan_area_prop_state_vec:])
-        
-        pape_in = torch.cat((plan, area, prop, edge), 1)
-        pape = self.pape_encoder(pape_in)
-        
-        # Similarly, avoid in-place addition here
-        pape_sum = pape + pape_in
-        pape_tanh = nn.Tanh()(pape_sum)
-        
-        meta = self.meta_encoder(pape_tanh)
-        meta_tanh = nn.Tanh()(meta)
-        
-        fm_in = torch.cat((feat_tanh, meta_tanh), 1)
-        latent = self.feat_meta_encoder(fm_in)
-        
-        # And here as well
-        latent_sum = latent + fm_in
-        out = nn.Tanh()(latent_sum)
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = F.relu(out)
         return out
-    
 
-#%%
-class MetaCnnEncoder(nn.Module):
-    def __init__(self, fenv_config):
-        super(MetaCnnEncoder, self).__init__()
-        
-        self.fenv_config = fenv_config
-        
-        self.cnn_scaling_factor = self.fenv_config['cnn_scaling_factor']
-        self.feature_input_dim = self.fenv_config['n_channels']
-        
-        self.feature_hidden_dim = 128
-        self.feature_output_dim = 128
-        
-        self.len_plan_state_vec = self.fenv_config['len_plan_state_vec']
-        self.len_plan_area_state_vec = self.fenv_config['len_plan_area_state_vec']
-        self.len_plan_area_prop_state_vec = self.fenv_config['len_plan_area_prop_state_vec']
-        
-        self.plan_desc_one_hot_input_dim = self.fenv_config['len_plan_state_vec_one_hot']
-        self.plan_desc_continous_input_dim = self.fenv_config['len_plan_state_vec_continous']
-        self.plan_desc_hidden_dim = 16
-        self.plan_desc_output_dim = 32
-        
-        self.area_input_dim = self.fenv_config['len_area_state_vec']
-        self.area_hidden_dim = 32
-        self.area_output_dim = 32
-        
-        self.proportion_input_dim = self.fenv_config['len_proportion_state_vec']
-        self.proportion_hidden_dim = 16
-        self.proportion_output_dim = 16
-        
-        self.edge_input_dim = self.fenv_config['len_adjacency_state_vec']
-        self.edge_hidden_dim = 64
-        self.edge_output_dim = 64
-        
-        self.meta_input_dim = self.plan_desc_output_dim + self.area_output_dim + self.proportion_output_dim + self.edge_output_dim
-        self.meta_hidden_dim = 128
-        self.meta_output_dim = 128
-        
-        self.latent_hidden_dim = self.feature_output_dim + self.meta_output_dim
-        self.latent_output_dim = 256
-        
-        self.cnn_feature_net = CnnFeatureEncoder(self.feature_input_dim, self.feature_output_dim, self.cnn_scaling_factor)
-        self.plan_desc_encoder_net = PlanDescriptionEncoder(self.plan_desc_one_hot_input_dim, self.plan_desc_continous_input_dim, self.plan_desc_hidden_dim, self.plan_desc_output_dim)
-        self.area_encoder_net = AreaEncoder(self.area_input_dim, self.area_hidden_dim, self.area_output_dim)
-        self.proportion_encoder_net = ProportionEncoder(self.proportion_input_dim, self.proportion_hidden_dim, self.proportion_output_dim)
-        self.edge_encoder_net = EdgeEncoder(self.edge_input_dim, self.edge_hidden_dim, self.edge_output_dim)
-        self.meta_encoder_net = MetaEncoder(self.meta_input_dim, self.meta_hidden_dim, self.meta_output_dim)
-        self.feature_and_meta_net = FeatureAndMetaEncoder(self.feature_output_dim, self.meta_output_dim,
-                                                          self.latent_hidden_dim, self.latent_output_dim,
-                                                          self.fenv_config)
 
-    
-    def forward(self, real_obs):
-        feature_net_out = self.cnn_feature_net(real_obs['observation_cnn'])
-        plan_desc_net_out = self.plan_desc_encoder_net(real_obs['observation_meta'][:, :self.len_plan_state_vec])
-        area_net_out = self.area_encoder_net(real_obs['observation_meta'][:, self.len_plan_state_vec:self.len_plan_area_state_vec])
-        proportion_net_out= self.proportion_encoder_net(real_obs['observation_meta'][:, self.len_plan_area_state_vec:self.len_plan_area_prop_state_vec])
-        edge_net_out = self.edge_encoder_net(real_obs['observation_meta'][:, self.len_plan_area_prop_state_vec:])
-        meta_out = self.meta_encoder_net(plan_desc_net_out, area_net_out, proportion_net_out, edge_net_out)
-        latent_out = self.feature_and_meta_net(feature_net_out, meta_out)
-        return latent_out
-    
-    
-    
 
-#%% 
-class MetaCnnResEncoder(nn.Module):
-    def __init__(self, fenv_config):
-        super(MetaCnnResEncoder, self).__init__()
+class MiniResidualCnnEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(MiniResidualCnnEncoder, self).__init__()
         
-        self.fenv_config = fenv_config
-        
-        self.cnn_scaling_factor = self.fenv_config['cnn_scaling_factor']
-        self.feature_input_dim = self.fenv_config['n_channels']
-        
-        self.feature_hidden_dim = 128
-        self.feature_output_dim = 128
-        
-        self.len_plan_state_vec = self.fenv_config['len_plan_state_vec']
-        self.len_plan_area_state_vec = self.fenv_config['len_plan_area_state_vec']
-        self.len_plan_area_prop_state_vec = self.fenv_config['len_plan_area_prop_state_vec']
-        
-        self.plan_desc_one_hot_input_dim = self.fenv_config['len_plan_state_vec_one_hot']
-        self.plan_desc_continous_input_dim = self.fenv_config['len_plan_state_vec_continous']
-        self.plan_desc_hidden_dim = 16
-        self.plan_desc_output_dim = 32
-        
-        self.area_input_dim = self.fenv_config['len_area_state_vec']
-        self.area_hidden_dim = 32
-        self.area_output_dim = 32
-        
-        self.proportion_input_dim = self.fenv_config['len_proportion_state_vec']
-        self.proportion_hidden_dim = 16
-        self.proportion_output_dim = 16
-        
-        self.edge_input_dim = self.fenv_config['len_adjacency_state_vec']
-        self.edge_hidden_dim = 64
-        self.edge_output_dim = 64
-        
-        self.meta_input_dim = self.plan_desc_output_dim + self.area_output_dim + self.proportion_output_dim + self.edge_output_dim
-        self.meta_hidden_dim = 128
-        self.meta_output_dim = 128
-        
-        self.latent_hidden_dim = self.feature_output_dim + self.meta_output_dim
-        self.latent_output_dim = 256
-        
-        self.resnet_feature_encoder = models.resnet50(pretrained=self.fenv_config['resnet_pretrained_flag'])
-        if self.fenv_config['n_channels'] == 1: self.resnet_feature_encoder.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.cfg = cfg
+        block = BasicBlock
+        self.in_channels = 64
+
+        self.num_blocks = self.cfg.get('num_blocks', [2, 2, 2, 2])
+
+        self.conv1 = Conv2dLayer(self.cfg['n_channels'], 64, 3, 1, 1)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.layer1 = self._make_layer(block, 64, self.num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 128, self.num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, self.num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, 256, self.num_blocks[3], stride=2)
+        self.linear = LinearLayer(256*block.expansion, self.cfg['image_output_dim'])
+
+
+    def _make_layer(self, block, out_channels, num_blocks, stride):
+        strides = [stride] + [1]*(num_blocks-1)
+        layers = []
+        for stride in strides:
+            layers.append(block(self.in_channels, out_channels, stride))
+            self.in_channels = out_channels * block.expansion
+        return nn.Sequential(*layers)
+
+
+    def forward(self, x): # (1, 23, 23)
+        out = self.bn1(self.conv1(x))
+        out = F.relu(out) if self.cfg['activation_fn_name'] == 'ReLU' else F.elu(out) 
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        if x.shape[-1] == 46:
+            out = self.layer4(out)
+        out = F.avg_pool2d(out, 4)
+        out = out.view(out.size(0), -1)
+        out = F.dropout(out, p=self.cfg['mini_res_drop'], training=self.training)
+        out = self.linear(out)
+        return out # 64
+
+    def forward_print(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        print("Post conv1 and BN1:", x.min().item(), x.max().item())
+        x = F.relu(x)
+
+        x = self.layer1(x)
+        print("Post layer1:", x.min().item(), x.max().item())
+        x = self.layer2(x)
+        print("Post layer2:", x.min().item(), x.max().item())
+        x = self.layer3(x)
+        print("Post layer3:", x.min().item(), x.max().item())
+
+        if x.shape[-1] == 46:
+            x = self.layer4(x)
+            print("Post layer4:", x.min().item(), x.max().item())
+
+        x = F.avg_pool2d(x, 4)
+        x = x.view(x.size(0), -1)
+        x = F.dropout(x, p=self.cfg['mini_res_drop'], training=self.training)
+        x = self.linear(x)
+        print("Final output:", x.min().item(), x.max().item())
+        return x
+
+
+### Official ResNet Cnn Encoder ###############################################
+class ResNetXCnnEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(ResNetXCnnEncoder, self).__init__()
+
+        self.cfg = cfg
+
+        self.resnet_feature_encoder = tvmodels.resnet50(pretrained=self.cfg['load_resnet_from_pretrained_weights'])
+        if self.cfg['n_channels'] == 1: self.resnet_feature_encoder.conv1 = Conv2dLayer(1, 64, 7, 2, 3)
 
         num_ftrs = self.resnet_feature_encoder.fc.in_features
         self.resnet_feature_encoder.fc = nn.Sequential(
-                nn.Linear(num_ftrs, self.feature_hidden_dim),
-                nn.ReLU(),
-                nn.Linear(self.feature_hidden_dim, self.feature_hidden_dim))
+                LinearLayer(num_ftrs, self.cfg['feature_hidden_dim']),
+                create_activation(self.cfg['activation_fn_name']),
+                LinearLayer(self.cfg['feature_hidden_dim'], self.cfg['resnetx_output_dim']))
         
-        self.plan_desc_encoder_net = PlanDescriptionEncoder(self.plan_desc_one_hot_input_dim, self.plan_desc_continous_input_dim, self.plan_desc_hidden_dim, self.plan_desc_output_dim)
-        self.area_encoder_net = AreaEncoder(self.area_input_dim, self.area_hidden_dim, self.area_output_dim)
-        self.proportion_encoder_net = ProportionEncoder(self.proportion_input_dim, self.proportion_hidden_dim, self.proportion_output_dim)
-        self.edge_encoder_net = EdgeEncoder(self.edge_input_dim, self.edge_hidden_dim, self.edge_output_dim)
-        self.meta_encoder_net = MetaEncoder(self.meta_input_dim, self.meta_hidden_dim, self.meta_output_dim)
-        self.feature_and_meta_net = FeatureAndMetaEncoder(self.feature_output_dim, self.meta_output_dim,
-                                                          self.latent_hidden_dim, self.latent_output_dim,
-                                                          self.fenv_config)
 
-    
-    def forward(self, real_obs):
-        feature_net_out = self.resnet_feature_encoder(real_obs['observation_cnn'])
-        plan_desc_net_out = self.plan_desc_encoder_net(real_obs['observation_meta'][:, :self.len_plan_state_vec])
-        area_net_out = self.area_encoder_net(real_obs['observation_meta'][:, self.len_plan_state_vec:self.len_plan_area_state_vec])
-        proportion_net_out= self.proportion_encoder_net(real_obs['observation_meta'][:, self.len_plan_area_state_vec:self.len_plan_area_prop_state_vec])
-        edge_net_out = self.edge_encoder_net(real_obs['observation_meta'][:, self.len_plan_area_prop_state_vec:])
-        meta_out = self.meta_encoder_net(plan_desc_net_out, area_net_out, proportion_net_out, edge_net_out)
-        latent_out = self.feature_and_meta_net(feature_net_out, meta_out)
-        return latent_out
-    
-  
-    
-#%%
-class ResidualBlock(nn.Module):
-    def __init__(self, channel_num, stride):
-        super(ResidualBlock, self).__init__()
-        
-        self.channel_num = channel_num
-        self.stride = stride
-        
-        self.res_block = nn.Sequential(
-            nn.Conv2d(self.channel_num, self.channel_num, kernel_size=3, stride=self.stride, padding=1, bias=False),
-            nn.BatchNorm2d(self.channel_num),
-            nn.ReLU(inplace=True),
-            
-            nn.Conv2d(self.channel_num, self.channel_num, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(self.channel_num),
-            nn.ReLU(inplace=True),
-        )
-    
-    
-    
     def forward(self, x):
-        res = self.res_block(x)
-        x = x + res
-        return x
+        out = self.resnet_feature_encoder(x)
+        return out
 
 
+###############################################################################
+### FeatureAndContextEncoder ##################################################
+###############################################################################
 
+class ContextAndFeatureEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(ContextAndFeatureEncoder, self).__init__()
+        
+        self.cfg = cfg
+        self.feature_context_embeddings = LinearLayer(self.cfg['meta_output_dim']+self.cfg['image_output_dim'], self.cfg['latent_hidden_dim'])
 
-#%%
-class MetaCnnResidual(nn.Module):
-    def __init__(self, in_channels, feature_hidden_dim):
-        super(MetaCnnResidual, self).__init__()
+        self.pre_mlp_normalizer = nn.LayerNorm(self.cfg['latent_hidden_dim'])
 
-        self.inp_layer = nn.Sequential(
-            nn.Conv2d(in_channels, 32, kernel_size=5, stride=1, padding=2, bias=False),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            )
+        self.mlp = nn.Sequential(
+            LinearLayer(self.cfg['latent_hidden_dim'], self.cfg['latent_hidden_dim']),
+            create_activation(self.cfg['activation_fn_name']),
+            LinearLayer(self.cfg['latent_hidden_dim'], self.cfg['latent_hidden_dim']),
+            nn.Dropout(p=self.cfg['img_meta_drop']), 
+        )
         
-        self._residual_block_1 = ResidualBlock(32, stride=1)
-        
-        self.downsampler_1 = nn.Sequential(
-                nn.Conv2d(32, 64, kernel_size=5, stride=2, padding=5),
-                nn.BatchNorm2d(64)
-                )
-        
-        self._residual_block_2 = ResidualBlock(64, stride=1)
-        
-        self.downsampler_2 = nn.Sequential(
-                nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=5),
-                nn.BatchNorm2d(128)
-                )
-        
-        self._residual_block_3 = ResidualBlock(128, stride=1)
-        
-        self.downsampler_3 = nn.Sequential(
-                nn.Conv2d(128, 256, kernel_size=3, stride=2),
-                nn.BatchNorm2d(256)
-                )
-        
+        self.last_linear = LinearLayer(self.cfg['latent_hidden_dim'], self.cfg['latent_output_dim'])
+        self.last_normalizer = nn.LayerNorm(self.cfg['latent_output_dim'])
 
-
-    def forward(self, x_):
-        x = self.inp_layer(x_)
-        x = self._residual_block_1(x)
-        x = self.downsampler_1(x)
-        x = self._residual_block_2(x)
-        x = self.downsampler_2(x)
-        x = self._residual_block_3(x)
-        x = self.downsampler_3(x)
-        return x
-   
+        
+    def forward(self, cotext_emb, feature_emd): # 64, 64
+        latent_in = torch.cat((cotext_emb, feature_emd), 1) # 128
+        embeds = self.feature_context_embeddings(latent_in)
+        mlp_x = self.pre_mlp_normalizer(embeds)
+        mlp_y = self.mlp(mlp_x)
+        skip = mlp_x + mlp_y
+        out = self.last_normalizer(self.last_linear(skip)) 
+        return out
     
-   
     
-#%%
-class MetaCnnResidualEncoder(nn.Module):
-    def __init__(self, fenv_config):
-        super(MetaCnnResidualEncoder, self).__init__()
-        
-        self.fenv_config = fenv_config
-        
-        self.cnn_scaling_factor = self.fenv_config['cnn_scaling_factor']
-        self.feature_input_dim = self.fenv_config['n_channels']
-        
-        self.feature_hidden_dim = 128
-        self.feature_output_dim = 128
-        
-        self.len_plan_state_vec = self.fenv_config['len_plan_state_vec']
-        self.len_plan_area_state_vec = self.fenv_config['len_plan_area_state_vec']
-        self.len_plan_area_prop_state_vec = self.fenv_config['len_plan_area_prop_state_vec']
-        
-        self.plan_desc_one_hot_input_dim = self.fenv_config['len_plan_state_vec_one_hot']
-        self.plan_desc_continous_input_dim = self.fenv_config['len_plan_state_vec_continous']
-        self.plan_desc_hidden_dim = 16
-        self.plan_desc_output_dim = 32
-        
-        self.area_input_dim = self.fenv_config['len_area_state_vec']
-        self.area_hidden_dim = 32
-        self.area_output_dim = 32
-        
-        self.proportion_input_dim = self.fenv_config['len_proportion_state_vec']
-        self.proportion_hidden_dim = 16
-        self.proportion_output_dim = 16
-        
-        self.edge_input_dim = self.fenv_config['len_adjacency_state_vec']
-        self.edge_hidden_dim = 64
-        self.edge_output_dim = 64
-        
-        self.meta_input_dim = self.plan_desc_output_dim + self.area_output_dim + self.proportion_output_dim + self.edge_output_dim
-        self.meta_hidden_dim = 128
-        self.meta_output_dim = 128
-        
-        self.latent_hidden_dim = self.feature_output_dim + self.meta_output_dim
-        self.latent_output_dim = 256
-        
-        
-        self.feature_net_inp_layer = nn.Conv2d(self.fenv_config['n_channels'], 16, kernel_size=5, stride=1, padding=2) # nn.Linear(obs_dim, self.feature_hidden_dim)# nn.Linear(self.fenv_config['len_feature_state_vec'], 256)#nn.Linear(obs_dim, 256)
-        
-        self.res_encoder = MetaCnnResidual(16, self.feature_hidden_dim)
+    
+###############################################################################
+### EncoderNet ################################################################
+###############################################################################
 
-        self.feature_hidden_layer = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.Flatten(),
-            )
+class MetaCnnEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(MetaCnnEncoder, self).__init__()
         
-        K = 2304 if self.fenv_config['cnn_scaling_factor'] == 1 else 4096
-        self.feature_out_layer = nn.Sequential(
-            nn.Linear(K , 128),
-            nn.ReLU(inplace=True)
-            )
+        self.cfg = cfg
         
-        self.plan_desc_encoder_net = PlanDescriptionEncoder(self.plan_desc_one_hot_input_dim, self.plan_desc_continous_input_dim, self.plan_desc_hidden_dim, self.plan_desc_output_dim)
-        self.area_encoder_net = AreaEncoder(self.area_input_dim, self.area_hidden_dim, self.area_output_dim)
-        self.proportion_encoder_net = ProportionEncoder(self.proportion_input_dim, self.proportion_hidden_dim, self.proportion_output_dim)
-        self.edge_encoder_net = EdgeEncoder(self.edge_input_dim, self.edge_hidden_dim, self.edge_output_dim)
-        self.meta_encoder_net = MetaEncoder(self.meta_input_dim, self.meta_hidden_dim, self.meta_output_dim)
-        self.feature_and_meta_net = FeatureAndMetaEncoder(self.feature_output_dim, self.meta_output_dim,
-                                                          self.latent_hidden_dim, self.latent_output_dim,
-                                                          self.fenv_config)
+        self.context_encoder = ContextEncoder(self.cfg)
         
+        if self.cfg['image_encoder_type'] == 'TinyCnnEncoder':
+            self.feature_encoder = TinyCnnEncoder(self.cfg)
+        elif self.cfg['image_encoder_type'] == 'MiniResidualCnnEncoder':
+            self.feature_encoder = MiniResidualCnnEncoder(self.cfg)
+        elif self.cfg['image_encoder_type'] == 'ResNetXCnnEncoder':
+            self.feature_encoder = ResNetXCnnEncoder(self.cfg)
+        else:
+            raise ValueError(f"Unsupported image_encoder_type: {self.cfg['image_encoder_type']}")
+        
+        self.context_and_feature_encoder = ContextAndFeatureEncoder(self.cfg)
 
     
+
     def forward(self, real_obs):
-        plan_img = real_obs['observation_cnn']
-        res_inp = self.feature_net_inp_layer(plan_img)
-        res_out = self.res_encoder(res_inp)
-        hidden_out = self.feature_hidden_layer(res_out)
-        feature_net_out = self.feature_out_layer(hidden_out)
+        obs_cnn = real_obs['observation_cnn']
+        obs_meta = real_obs['observation_meta']
+
+        if obs_cnn.shape[3] in [1, 3]: 
+            obs_cnn = obs_cnn.permute(0, 3, 1, 2)
+        else:
+            assert obs_cnn.shape[1] in [1, 3], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
+
+        cotext_emb = self.context_encoder(obs_meta)   
+        feature_emd = self.feature_encoder(obs_cnn)
+
+        out = self.context_and_feature_encoder(cotext_emb, feature_emd)
+        return out
+
+
+class GetTrainedModelAsEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(GetTrainedModelAsEncoder, self).__init__()
+        self.cfg = cfg
+        self.load_pretrained_model()
         
-        plan_desc_net_out = self.plan_desc_encoder_net(real_obs['observation_meta'][:, :self.len_plan_state_vec])
-        area_net_out = self.area_encoder_net(real_obs['observation_meta'][:, self.len_plan_state_vec:self.len_plan_area_state_vec])
-        proportion_net_out= self.proportion_encoder_net(real_obs['observation_meta'][:, self.len_plan_area_state_vec:self.len_plan_area_prop_state_vec])
-        edge_net_out = self.edge_encoder_net(real_obs['observation_meta'][:, self.len_plan_area_prop_state_vec:])
-        meta_out = self.meta_encoder_net(plan_desc_net_out, area_net_out, proportion_net_out, edge_net_out)
-        latent_out = self.feature_and_meta_net(feature_net_out, meta_out)
+
+    def load_pretrained_model(self):
+        self.pretrained_model = torch.load(self.cfg['pretrained_model_path'])
+        for param in self.pretrained_model.parameters():
+            param.requires_grad = False
+        # for param in self.pretrained_model._actor_head.parameters():
+        #     param.requires_grad = False
+        # for param in self.pretrained_model._critic_head.parameters():
+        #     param.requires_grad = False
         
-        return latent_out
+
+    def get_encoder(self):
+        return self.pretrained_model.encoder
+
+
+    def get_embeddings(self, inp):
+        with torch.no_grad():
+            emb = self.get_encoder(inp)
+        return emb
+        
+    
+    def get_actor_head(self):
+        return self.pretrained_model._actor_head
+    
+
+    def get_critic_head(self):
+        return self.pretrained_model._critic_head
+        
+
+class MetaCnnNetPreTrainedEncoder(nn.Module):
+    def __init__(self, cfg):
+        nn.Module.__init__(self)
+        self.cfg = cfg
+        
+        self.pretrained = GetTrainedModelAsEncoder(self.cfg)
+        self.encoder = self.pretrained.get_encoder()
+        
+
+    def forward(self, real_obs):
+        return self.encoder(real_obs)
+        
+    
+    
+# p = '/home/rdbt/ETHZ/dbt_python/housing_design/storage_nobackup/rlb_agents_storage/tunner/Prj__2024_04_10_1800__rlb__bc2ppo__2nd_paper/Scn__2024_04_10_1805__PTM__ZSLR__BC/model/modelsd.pt'   
+
+# class MiniResidualCnnEncoder(nn.Module):
+#     def __init__(self, cfg):
+#         super(MiniResidualCnnEncoder, self).__init__()
+        
+#         self.cfg = cfg
+#         self.image_net = ResNetXCnnEncoder(self.cfg) if self.cfg['image_encoder_type'] == 'ResNetXCnnEncoder' else MiniResidualCnnEncoder(self.cfg)
+            
+
+#     def forward(self, real_obs):
+#         obs_cnn = real_obs
+
+#         if obs_cnn.shape[3] in [1, 3]: 
+#             obs_cnn = obs_cnn.permute(0, 3, 1, 2)
+#         else:
+#             assert obs_cnn.shape[1] in [1, 3], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
+
+#         image_emd = self.image_net(obs_cnn)
+
+#         return image_emd

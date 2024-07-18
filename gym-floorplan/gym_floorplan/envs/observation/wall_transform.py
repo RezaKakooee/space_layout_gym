@@ -10,6 +10,8 @@ import numpy as np
 
 from gym_floorplan.envs.observation.wall_generator import WallGenerator
 
+
+
 #%%
 class WallTransform:
     def __init__(self, wall_name:str=None, wall_coords:dict=None, action_i:int=None, plan_data_dict=None, fenv_config:dict=None):
@@ -162,7 +164,7 @@ class WallTransform:
         for p in points:
             if p%2 != 0:
                 print(p)
-                raise ValueError('Wall_transform, there is something wrong here')
+                raise ValueError(f"Wall_transform, there is something wrong here. The wall_coords is: {wall_coords}")
         
     def _get_dynamic_coords(self):
         """

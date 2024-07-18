@@ -10,6 +10,8 @@ Created on Tue Aug  3 14:42:29 2021
 import copy
 import numpy as np
 
+
+
 # %%
 
 class SequentialPainter:

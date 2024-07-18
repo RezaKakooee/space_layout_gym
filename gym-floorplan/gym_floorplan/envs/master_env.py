@@ -15,6 +15,7 @@ import os
 import gymnasium as gym
 import numpy as np
 from datetime import datetime
+from collections import defaultdict
 
 import gym_floorplan
 from gym_floorplan.envs.action.action import Action
@@ -24,12 +25,11 @@ from gym_floorplan.envs.render.render import Render
 
 
 
-
 # %%
-class MasterEnv(gym.Env):#(MultiAgentEnv):
-    def __init__(self, env_config={'fenv_name': 'DOLW-v0'}):
+class SpaceLayoutGym(gym.Env):#(MultiAgentEnv):
+    def __init__(self, env_config={'fenv_name': 'SpaceLayoutGym-v0'}):
         self.fenv_config = self.env_config = env_config
-        self.env_name = 'DOLW-v0'
+        self.env_name = 'SpaceLayoutGym-v0'
         
         self.obs = Observation(fenv_config=self.fenv_config)
         self.act = Action(fenv_config=self.fenv_config)
@@ -44,19 +44,29 @@ class MasterEnv(gym.Env):#(MultiAgentEnv):
         
         # self.seed(42)
         
-        self.max_episode_steps = 1000
+        self.max_episode_steps = self.fenv_config['stop_ep_time_step']
         
+        self.load_plan_randomly = False
+
 
 
     def reset(self, *, seed=None, options=None):
         self.episode += 1
-        observation = self.obs.obs_reset(self.episode)
+        episode_counter = None if self.load_plan_randomly else self.episode
+        observation = self.obs.obs_reset(episode_counter)
         self.observation_space = self.obs.observation_space
         self.accepted_action_sequence = []
         self.ep_time_step = 0
         self.ep_sum_reward = 0
         self.ep_max_reward = float('-inf')
         self.ep_mean_reward = 0
+        if self.fenv_config['load_good_action_sequence_for_on_policy_pre_training'] and np.random.rand() <= self.fenv_config['load_good_action_sequence_prob']:
+            self.load_good_action_sequence_for_on_policy_pre_training = True
+        else:
+            self.load_good_action_sequence_for_on_policy_pre_training = False
+        self.action_counter = 0
+        self.prev_action = 0
+        self.prev_reward = 0
         return observation, {}
         
     
@@ -64,11 +74,24 @@ class MasterEnv(gym.Env):#(MultiAgentEnv):
     def seed(self, seed: int = None):
         self.np_random, seed = gym.utils.seeding.np_random(seed)
         return [seed]
+    
+    
+    
+    def set_seed(self, seed: int = None):
+        self.np_random, seed = gym.utils.seeding.np_random(seed)
+        return [seed]
 
 
 
     def step(self, action):
+        if self.load_good_action_sequence_for_on_policy_pre_training:
+            action = self.obs.plan_data_dict['potential_good_action_sequence'][self.action_counter] # [321, 1338, 976, 933, 915, 848][self.action_counter]#
+        
         observation = self.obs.update(self.episode, action, self.ep_time_step)
+        
+        if isinstance(observation, dict) and 'cnn' in self.fenv_config['model_last_name']:
+            assert observation['observation_cnn'].shape == (23, 23, 1) if self.fenv_config['cnn_scaling_factor'] == 1 else (46, 46, 1)
+            assert observation['observation_meta'].shape == (172,)
         
         done = truncated = self.obs.done
         
@@ -76,36 +99,48 @@ class MasterEnv(gym.Env):#(MultiAgentEnv):
             reward = -2000
         else:
             reward = self.rew.reward(self.obs.plan_data_dict,
-                                 self.obs.decoded_action_dict['active_wall_name'], 
-                                 self.obs.active_wall_status,
-                                 self.ep_time_step, 
-                                 done)
-        
+                                     self.obs.decoded_action_dict['active_wall_name'], 
+                                     self.obs.active_wall_status,
+                                     self.ep_time_step, 
+                                     done)
+
         self.ep_sum_reward += reward
         self.ep_max_reward = max(self.ep_max_reward, reward)
         self.ep_mean_reward = 1/(self.ep_time_step+1) * (self.ep_time_step*self.ep_mean_reward + reward)
         
-        if self.obs.active_wall_status in ['accepted', 'well_finished']:
+        
+        if self.fenv_config['only_save_high_quality_env_data']:
+            if self.obs.active_wall_status in ['accepted', 'well_finished']:
+                self.accepted_action_sequence.append(action)
+            info = self._get_info(done, reward) if (done and self.fenv_config['save_env_info_on_callback']) else {}
+        
+        else:
             self.accepted_action_sequence.append(action)
-            
-        info = self._get_info(done, reward) if (done and self.fenv_config['save_env_info_on_callback']) else {}
+            info = self._get_info(done, reward) if self.fenv_config['save_env_info_on_callback'] else {}
+        
         
         if not done:
             self.ep_time_step += 1
         
         self.done = done
         self.info = info
+        
+        self.action_counter += 1
+
         return observation, reward, done, truncated, info
     
     
     
     def _get_info(self, done, reward):
-        if self.obs.active_wall_status == 'well_finished':
-            info = {'env_data': self._update_env_stats(reward)}
+        if self.fenv_config['only_save_high_quality_env_data']:
+            if self.obs.active_wall_status == 'well_finished':
+                info = {'env_data': self._update_env_stats(reward)}
+            else:
+                info = {} if self.fenv_config['library'] == 'RLlib' else {'episode_end_data': self._get_episode_end_data(reward)}
         else:
-            info = {} if self.fenv_config['library'] == 'RLlib' else {'episode_end_data': self._get_episode_end_data(reward)}
+            info = {'env_data': self._update_env_stats(reward)}
         return info
-        
+    
     
 
     def _get_episode_end_data(self, reward):
@@ -138,8 +173,7 @@ class MasterEnv(gym.Env):#(MultiAgentEnv):
             'extended_entrance_positions': str(self.obs.plan_data_dict['extended_entrance_positions']),
             'extended_entrance_coords': str(self.obs.plan_data_dict['extended_entrance_coords']),
             'entrance_is_on_facade': self.obs.plan_data_dict['entrance_is_on_facade'],
-            'corridor_id': self.obs.plan_data_dict['corridor_id'],
-            'living_room_id': self.obs.plan_data_dict['living_room_id'],
+            'lvroom_id': self.obs.plan_data_dict['lvroom_id'],
             'n_facades_blocked': self.obs.plan_data_dict['n_facades_blocked'],
             'facades_blocked': str(self.obs.plan_data_dict['facades_blocked']),
             'areas_desired': str(self.obs.plan_data_dict['areas_desired']),
@@ -153,14 +187,6 @@ class MasterEnv(gym.Env):#(MultiAgentEnv):
             }
         
         
-        def _get_living_room_id(edges, corridor_id):
-            rooms_connected_to_corridor = []
-            for ed in edges:
-                if corridor_id in ed:
-                    rooms_connected_to_corridor.extend(ed)
-            rooms_connected_to_corridor = list(set(rooms_connected_to_corridor).difference(set([corridor_id])))
-            return np.random.choice(rooms_connected_to_corridor, 1)[0]
-        
         
         def _get_obs_stats(obs):
             if isinstance(obs, dict):
@@ -171,35 +197,47 @@ class MasterEnv(gym.Env):#(MultiAgentEnv):
         edge_list_facade_achieved_str = self.obs.plan_data_dict['edge_list_facade_achieved_str'].copy()
         edge_list_entrance_achieved_str = self.obs.plan_data_dict['edge_list_entrance_achieved_str'].copy()
         if self.fenv_config['plan_config_source_name'] in ['create_fixed_config', 'create_random_config']:
-            corridor_id = [room for edge in edge_list_entrance_achieved_str for room in edge if isinstance(room, int)][0]
-            rooms_connected_to_corridor = []
-            living_room_id = ( self.obs.plan_data_dict['living_room_id'] if self.obs.plan_data_dict['living_room_id'] 
-                               else _get_living_room_id(self.obs.plan_data_dict['edge_list_room_achieved'], corridor_id) )
+            lvroom_id = [room for edge in edge_list_entrance_achieved_str for room in edge if isinstance(room, int)]
+            if len(lvroom_id):
+                lvroom_id = lvroom_id[0]
+                
+                rooms_connected_to_lvroom = []
+            else:
+                lvroom_id = -1
+                
             self.env_stats.update({'edge_list_room_desired': str(self.obs.plan_data_dict['edge_list_room_achieved']),
                                    'edge_list_room_achieved': str(self.obs.plan_data_dict['edge_list_room_achieved']),
                                    'edge_list_facade_desired_str': str(edge_list_facade_achieved_str),
                                    'edge_list_facade_achieved_str': str(edge_list_facade_achieved_str),
                                    'edge_list_entrance_desired_str': str(edge_list_entrance_achieved_str),
                                    'edge_list_entrance_achieved_str': str(edge_list_entrance_achieved_str),
-                                   'corridor_id': corridor_id,
-                                   'living_room_id': living_room_id,
+                                   'lvroom_id': lvroom_id,
                                    })
         else:
-            self.env_stats.update({'edge_list_room_desired': str(self.obs.plan_data_dict['edge_list_room_desired']),
-                                   'edge_list_room_achieved': str(self.obs.plan_data_dict['edge_list_room_achieved']),
-                                   'edge_list_facade_desired_str': str(self.obs.plan_data_dict['edge_list_facade_desired_str']),
-                                   'edge_list_facade_achieved_str': str(edge_list_facade_achieved_str),
-                                   'edge_list_entrance_desired_str': str(self.obs.plan_data_dict['edge_list_entrance_desired_str']),
-                                   'edge_list_entrance_achieved_str': str(edge_list_entrance_achieved_str)
-                                   })
+            if self.fenv_config['only_save_high_quality_env_data']:
+                self.env_stats.update({'edge_list_room_desired': str(self.obs.plan_data_dict['edge_list_room_desired']),
+                                       'edge_list_room_achieved': str(self.obs.plan_data_dict['edge_list_room_achieved']),
+                                       'edge_list_facade_desired_str': str(self.obs.plan_data_dict['edge_list_facade_desired_str']),
+                                       'edge_list_facade_achieved_str': str(edge_list_facade_achieved_str),
+                                       'edge_list_entrance_desired_str': str(self.obs.plan_data_dict['edge_list_entrance_desired_str']),
+                                       'edge_list_entrance_achieved_str': str(edge_list_entrance_achieved_str)
+                                       })
+            else:
+                self.env_stats.update({'edge_list_room_desired': str(self.obs.plan_data_dict['edge_list_room_desired']),
+                                       'edge_list_room_achieved': str(self.obs.plan_data_dict['edge_list_room_achieved']),
+                                       'edge_list_facade_desired_str': str(self.obs.plan_data_dict['edge_list_facade_desired_str']),
+                                       'edge_list_facade_achieved_str': str(edge_list_facade_achieved_str),
+                                       'edge_list_entrance_desired_str': str(self.obs.plan_data_dict['edge_list_entrance_desired_str']),
+                                       'edge_list_entrance_achieved_str': str(edge_list_entrance_achieved_str),
+                                       })
         
         return self.env_stats
 
 
 
     def render(self, episode=0, mode='human'):
-        image_arr = self.vis.render(self.obs.plan_data_dict, self.episode, self.ep_time_step)
-        return np.array(image_arr)
+        image_path = self.vis.render(self.obs.plan_data_dict, self.episode, self.ep_time_step)
+        return image_path
 
 
     
@@ -246,9 +284,9 @@ if __name__ == "__main__":
         'phase': 'debug',
         
         'action_masking_flag': False,
-        'rewarding_method_name': 'Simple_Quad_Reward', # ['Simple_Linear_Reward', 'Simple_Exp_Reward', 'Simple_Quad_Reward'],
-        'cnn_observation_name': 'canvas_1d',
-        'model_name': 'MetaFcNet', #['TinyLinearNet', 'TinyCnnNet'],
+        'rewarding_method_name': 'Smooth_Quad_Reward', # Smooth_Linear_Reward, Smooth_Exp_Reward, Smooth_Quad_Reward
+        'cnn_observation_name': 'rooms_cmap',
+        'model_last_name': 'MetaFcNet', # TinyFcNet, TinyCnnNet, MetaCnnNet, MetaFcNet
         }
     
     
@@ -256,14 +294,14 @@ if __name__ == "__main__":
                                    action_masking_flag=default_config['action_masking_flag'], 
                                    cnn_observation_name=default_config['cnn_observation_name'],
                                    rewarding_method_name=default_config['rewarding_method_name'],
-                                   model_name=default_config['model_name']).get_scenarios()
+                                   model_last_name=default_config['model_last_name']).get_scenarios()
     
     fenv_config = LaserWallConfig(agent_name=default_config['agent_name'], 
                                   phase=default_config['phase'], 
                                   scenarios_dict=scenarios_dict).get_config()
     
     
-    self = MasterEnv(fenv_config)
+    self = SpaceLayoutGym(fenv_config)
     s0, _ = self.reset()
     a = self.action_space.sample()
     s, _, _, _, _= self.step(a)

@@ -6,9 +6,10 @@ Created on Sun Aug  8 23:34:14 2021
 """
 #%%
 
-import gymnasium as gym
 import copy
 import numpy as np
+import gymnasium as gym
+from collections import defaultdict
 
 # from gym_floorplan.base_env.observation.base_observation import BaseObservation
 
@@ -36,48 +37,69 @@ class Observation:
         
         self.observation_space = self._get_observation_space()
 
+        self.time_dict_observation = defaultdict(dict)
+
 
 
     # @property
     def _get_observation_space(self): # def observation_space(self): 
         self.state_data_dict = self.state_composer.creat_observation_space_variables()
         
-        _observation_space_fc = gym.spaces.Box(low=self.state_data_dict['low_fc'], 
-                                               high=self.state_data_dict['high_fc'], 
-                                               shape=self.state_data_dict['shape_fc'], 
-                                               dtype=float)
+        _observation_space_fc = gym.spaces.Box(
+            low=self.state_data_dict['low_fc'], 
+            high=self.state_data_dict['high_fc'], 
+            shape=self.state_data_dict['shape_fc'], 
+            dtype=float
+        )
 
-        _observation_space_cnn = gym.spaces.Box(low=self.state_data_dict['low_cnn'], 
-                                                high=self.state_data_dict['high_cnn'], 
-                                                shape=self.state_data_dict['shape_cnn'], 
-                                                dtype=np.uint8)
+        _observation_space_cnn = gym.spaces.Box(
+            low=self.state_data_dict['low_cnn'], 
+            high=self.state_data_dict['high_cnn'], 
+            shape=self.state_data_dict['shape_cnn'], 
+            dtype=np.uint8
+        )
         
-        _observation_space_meta = gym.spaces.Box(low=self.state_data_dict['low_meta'], 
-                                                 high=self.state_data_dict['high_meta'], 
-                                                 shape=self.state_data_dict['shape_meta'], 
-                                                 dtype=float)
+        _observation_space_meta = gym.spaces.Box(
+            low=self.state_data_dict['low_meta'], 
+            high=self.state_data_dict['high_meta'], 
+            shape=self.state_data_dict['shape_meta'], 
+            dtype=float
+        )
 
-        _observation_space_metafc = gym.spaces.Dict({
-            'observation_fc': gym.spaces.Box(low=self.state_data_dict['low_fc'], 
-                                             high=self.state_data_dict['high_fc'], 
-                                             shape=self.state_data_dict['shape_fc'], 
-                                             dtype=float),
-            'observation_meta': gym.spaces.Box(low=self.state_data_dict['low_meta'], 
-                                               high=self.state_data_dict['high_meta'], 
-                                               shape=self.state_data_dict['shape_meta'], 
-                                               dtype=float)
-            })
+        if self.fenv_config['meta_observation_type'] == 'dict':
+            _observation_space_metafc = gym.spaces.Dict(
+                {'observation_fc': _observation_space_fc, 'observation_meta':  _observation_space_meta}
+            )
+            
+            _observation_space_metacnn = gym.spaces.Dict(
+                {'observation_cnn': _observation_space_cnn, 'observation_meta': _observation_space_meta,}
+            )
         
-        _observation_space_metacnn = gym.spaces.Dict({
-            'observation_cnn': gym.spaces.Box(low=self.state_data_dict['low_cnn'], 
-                                              high=self.state_data_dict['high_cnn'], 
-                                              shape=self.state_data_dict['shape_cnn'], 
-                                              dtype=np.uint8),
-            'observation_meta': gym.spaces.Box(low=self.state_data_dict['low_meta'], 
-                                               high=self.state_data_dict['high_meta'], 
-                                               shape=self.state_data_dict['shape_meta'], 
-                                               dtype=float)
-            })
+        elif self.fenv_config['meta_observation_type'] == 'tuple':
+            _observation_space_metafc = gym.spaces.Tuple(
+                (_observation_space_fc, _observation_space_meta)
+            )
+
+            _observation_space_metacnn = gym.spaces.Tuple(
+                (_observation_space_cnn, _observation_space_meta)
+            )
+        
+        elif self.fenv_config['meta_observation_type'] == 'list':
+            _observation_space_metacnn = gym.spaces.Box(
+                    low=min(self.state_data_dict['low_cnn'], self.state_data_dict['low_meta']), 
+                    high=max(self.state_data_dict['high_cnn'], self.state_data_dict['high_meta']), 
+                    shape=np.prod(self.state_data_dict['shape_cnn']) + self.state_data_dict['shape_meta'], 
+                    dtype=float,
+            )
+            
+            _observation_space_metafc = gym.spaces.Box(
+                    low=min(self.state_data_dict['low_fc'], self.state_data_dict['low_meta']), 
+                    high=max(self.state_data_dict['high_fc'], self.state_data_dict['high_meta']), 
+                    shape=self.state_data_dict['shape_fc'] + self.state_data_dict['shape_meta'], 
+                    dtype=float,
+            )
+            
+            
 
         # _observation_space_gnn = gym.spaces.Box(low=self.state_data_dict['low_gnn'], 
         #                                         high=self.state_data_dict['high_gnn'], 
@@ -152,7 +174,7 @@ class Observation:
             elif self.fenv_config['gnn_obs_method'] == 'image':
                 self._observation_space = _observation_space_cnn
             else:
-                raise ValueError('Invalid gnn_obs_method!')
+                raise ValueError(f"Invalid gnn_obs_method! The current method is {self.fenv_config['gnn_obs_method']}")
                 
         else:
             raise ValueError(f"{self.fenv_config['net_arch']} net_arch does not exist")
@@ -173,6 +195,9 @@ class Observation:
         plan_data_dict.update({'active_wall_name': self.active_wall_name,
                                'active_wall_status': self.active_wall_status})
         
+        plan_data_dict = self.state_composer.warooge_data_extractor(plan_data_dict)
+        plan_data_dict = self.state_composer.refine_moving_labels(plan_data_dict)
+        
         self.observation, plan_data_dict = self._make_observation(plan_data_dict)
         
         if self.fenv_config['action_masking_flag']:
@@ -192,7 +217,7 @@ class Observation:
         self.plan_data_dict.update({'done': self.done,
                                     'shuffeled_idxs': shuffeled_idxs,
                                     'state_data_dict': self.state_data_dict})
-        
+
         return self.observation
         
     
@@ -201,17 +226,20 @@ class Observation:
         self.episode = episode
         if ep_time_step > self.fenv_config['stop_ep_time_step']:
             print('wait in update of obervation')
-            raise ValueError('ep_time_step went over than the limit!')
-            
+            raise ValueError(f"ep_time_step went over than the limit! ep_time_step is {ep_time_step}, while the limit is self.fenv_config['stop_ep_time_step']")
+        
         plan_data_dict = copy.deepcopy(self.plan_data_dict)
         if self.fenv_config['learn_room_size_category_order_flag']:
             self.decoded_action_dict = self.action_parser.decode_action(plan_data_dict, action)
+        elif self.fenv_config['learn_room_order_directly']:
+            self.decoded_action_dict = self.action_parser.decode_action_from_direct_order_learning(plan_data_dict, action)
         
         if self.decoded_action_dict['action_status'] is not None:
             self.active_wall_status, new_walls_coords = self.action_parser.select_wall(plan_data_dict, self.decoded_action_dict)
         else:
             self.active_wall_status = 'rejected_by_missing_room'
-            
+            # print("action_status is None")
+
         if self.active_wall_status == "check_room_area":
             self.active_wall_name = self.decoded_action_dict['active_wall_name']
             active_wall_i = self.decoded_action_dict['active_wall_i']
@@ -223,17 +251,17 @@ class Observation:
                 raise ValueError('Probably sth need to be match with n_corners')
             
             plan_data_dict = self.plan_constructor.update_plan_with_active_wall(plan_data_dict, new_walls_coords, self.active_wall_name)
-            
+
             plan_data_dict = self.painter.update_obs_mat(plan_data_dict, self.active_wall_name) # here we update plan_data_dict based on the wall order
-            
+
             plan_data_dict = self.rextractor.update_room_dict(plan_data_dict, self.active_wall_name)
-            
-            # plan_data_dict = self.plan_constructor.update_obs_canvas_mat(plan_data_dict)       
-            
+
             plan_data_dict = self.plan_constructor._update_block_cells(plan_data_dict)
-            
+
+            # print(f"before: self.active_wall_status: {self.active_wall_status}")
             self.active_wall_status = self.design_inspector.inspect_constraints(plan_data_dict, self.active_wall_name)
-            
+
+
             if self.active_wall_status == "accepted":
                 ### Note: active_wall_status will probably change in this section
                 self.n_actions_accepted += 1
@@ -242,20 +270,35 @@ class Observation:
                 plan_data_dict['wall_types'].update({self.decoded_action_dict['active_wall_name']: self.decoded_action_dict['wall_type']})
                 plan_data_dict['room_wall_occupied_positions'].extend(np.argwhere(plan_data_dict['obs_moving_ones']==1).tolist())
                 
-                del plan_data_dict['room_i_per_size_category'][self.decoded_action_dict['room_size_cat_name']][0]
-                del plan_data_dict['room_area_per_size_category'][self.decoded_action_dict['room_size_cat_name']][0]   
+                if self.fenv_config['learn_room_size_category_order_flag']:
+                    del plan_data_dict['room_i_per_size_category'][self.decoded_action_dict['room_size_cat_name']][0]
+                    del plan_data_dict['room_area_per_size_category'][self.decoded_action_dict['room_size_cat_name']][0]   
             
                 self.done, self.active_wall_status = self._check_terminate(plan_data_dict, self.active_wall_name, self.active_wall_status, ep_time_step)
                 
-                self.observation, plan_data_dict = self._make_observation(plan_data_dict, self.active_wall_name, self.active_wall_status)
                 
-                try: 
-                    if (self.active_wall_status in ['badly_stopped', 'well_finished'] or 
-                        self.fenv_config['phase'] in ['debug', 'test'] ):
-                        plan_data_dict = self.design_inspector.inspect_objective(plan_data_dict)
-                except:
-                    print(f"self.active_wall_status: {self.active_wall_status}")
-                    raise ValueError("Wait in observation")
+                plan_data_dict = self.state_composer.warooge_data_extractor(plan_data_dict)
+                plan_data_dict = self.state_composer.refine_moving_labels(plan_data_dict)
+                
+                if 'create' not in self.fenv_config['plan_config_source_name'] :
+                    plan_data_dict = self.design_inspector._extract_edge_list(plan_data_dict, end_of_episode=False) 
+                
+                
+                self.observation, plan_data_dict = self._make_observation(plan_data_dict, self.active_wall_name, self.active_wall_status)
+
+                # TODO, uncomment following
+                # try: 
+                # if (self.active_wall_status in ['badly_stopped', 'well_finished'] or 
+                #         self.fenv_config['phase'] in ['debug', 'test_'] ):
+                #         plan_data_dict = self.design_inspector.inspect_objective(plan_data_dict)
+                # else: # still we inspect to compute current adj
+                #     plan_data_dict = self.design_inspector._extract_edge_list(plan_data_dict, end_of_episode=False)
+                    
+
+                # except:
+                #     print(f"self.active_wall_status: {self.active_wall_status}")
+                #     np.save("plan_data_dict__in_observation__update.npy", plan_data_dict)
+                #     raise ValueError("design_inspector cannot be executed properly for some reason")
                     
                 if self.fenv_config['action_masking_flag']:
                     if self.done:
@@ -276,15 +319,22 @@ class Observation:
                             self.active_wall_status = "badly_stopped_"
 
                 self.plan_data_dict = copy.deepcopy(plan_data_dict) # only in this situation I change the self.plan_data_dict
-                
+
             else: # self.active_wall_status != "accepted"
                 self.done, self.active_wall_status = self._is_time_over(self.active_wall_status, ep_time_step)
-                
+            
         else: # self.active_wall_status != "check_room_area"
             self.done, self.active_wall_status = self._is_time_over(self.active_wall_status, ep_time_step)
+            
+        
+        if self.fenv_config['zero_constraint_flag']:
+            if self.done and (self.active_wall_status not in ['check_room_area', 'accepted']):
+                self.plan_data_dict = self.design_inspector.inspect_objective(plan_data_dict)
         
         self.plan_data_dict.update({'done': self.done,
-                                    'active_wall_status': self.active_wall_status})
+                                    'active_wall_status': self.active_wall_status,
+                                    'obs_arr_conv': self.observation,
+                                    'ep_time_step': ep_time_step})
         
         return self.observation
     
@@ -296,10 +346,10 @@ class Observation:
             active_room_name = f"room_{active_room_i}"
         
         
-        plan_data_dict = self.state_composer.warooge_data_extractor(plan_data_dict)
+        # plan_data_dict = self.state_composer.warooge_data_extractor(plan_data_dict)
         
         
-        plan_data_dict = self.state_composer.refine_moving_labels(plan_data_dict)
+        # plan_data_dict = self.state_composer.refine_moving_labels(plan_data_dict)
         
         plan_data_dict = self.state_composer.create_x_observation(plan_data_dict, active_wall_name)
         
@@ -334,7 +384,15 @@ class Observation:
             done, active_wall_status = self._is_time_over(active_wall_status, ep_time_step)
         
         else:
-            raise ValueError('n_rooms cannot be bigger than num_desired_rooms')
+            np.save("plan_data_dict__in__observation__check_terminate.npy", plan_data_dict)
+            message = f"""
+            n_rooms cannot be bigger than num_desired_rooms. 
+            The current one is {len(plan_data_dict['areas_achieved'])}, 
+            while the limit is {plan_data_dict['number_of_total_rooms']}
+            plan_id is: {plan_data_dict['plan_id']}
+            
+            """
+            raise ValueError(message)
                 
         return done, active_wall_status
     

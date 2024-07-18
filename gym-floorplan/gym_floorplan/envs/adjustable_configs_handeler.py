@@ -11,6 +11,7 @@ Created on Fri Aug  5 02:05:20 2022
 import os
 
 import ast
+import copy
 import random
 import numpy as np
 import pandas as pd
@@ -120,12 +121,12 @@ class AdjustableConfigsHandeler:
         
         
         if ( self.fenv_config['plan_config_source_name'] == 'create_random_config' and 
-             self.fenv_config['is_entrance_adjacency_a_constraint'] and
-             self.fenv_config['is_cooridor_entrance_a_constraint'] ):
-            corridor_id = self.fenv_config['min_room_id'] + n_rooms - 1
-            living_room_id = self.fenv_config['min_room_id'] 
+              (self.fenv_config['is_entrance_adjacency_a_constraint'] and
+               self.fenv_config['is_entrance_lvroom_connection_a_constraint']) or
+             self.fenv_config['zero_constraint_flag'] ):
+            lvroom_id = self.fenv_config['min_room_id'] # take the biggest room as the lvroom
         else:
-            corridor_id, living_room_id = None, None    
+            lvroom_id = None
         
         adjustable_configs = {
             'plan_config_source_name': 'create_random_config',
@@ -134,7 +135,7 @@ class AdjustableConfigsHandeler:
             'n_corners': n_corners,
             'mask_numbers': mask_numbers,
             'number_of_total_walls': n_walls + n_corners,
-            'number_of_total_rooms': n_rooms + n_corners, # TODO
+            'number_of_total_rooms': n_rooms + n_corners, 
             'masked_corners': masked_corners,
             'mask_lengths': mask_lengths,
             'mask_widths': mask_widths,
@@ -154,8 +155,7 @@ class AdjustableConfigsHandeler:
             'entrance_is_on_facade': entrance_is_on_facade,
             'n_facades_blocked': n_facades_blocked,
             'facades_blocked': facades_blocked,
-            'corridor_id': corridor_id,
-            'living_room_id': living_room_id
+            'lvroom_id': lvroom_id,
             }
         
         return adjustable_configs
@@ -202,40 +202,25 @@ class AdjustableConfigsHandeler:
     
             
     def _load_plans(self):
-        # self.fenv_config['plan_path'] = "/home/rdbt/ETHZ/dbt_python/housing_design/storage/off_agents_storage/Scn__2023_08_30_1624__100xRs/results/evaluated_test_plans_003000.csv"
+        # self.fenv_config['plan_path'] = '/home/rdbt/ETHZ/dbt_python/housing_design/storage_nobackup/rnd_agents_storage/Scn__2024_02_02_2222__CRC__XRr__EnZSQR__RND__Stable/plans_test.csv'
         if self.plans_df is None:
-            if self.fenv_config['plan_config_source_name'] == 'imitation_mode':
-                plans_df = pd.read_csv(self.fenv_config['plan_path'])
-
-            elif self.fenv_config['plan_config_source_name'] == 'offline_mode':
-                if self.fenv_config['scenario_name'] == 'from_random':
-                    plans_df = pd.read_csv(self.fenv_config['plan_path'])
-                else:
-                    plans_df_path = os.path.join(self.fenv_config['the_scenario_dir'], 'results/plans.csv')
-                    plans_df = pd.read_csv(plans_df_path)
-                    
-                if self.fenv_config['fixed_num_rooms_for_loading']:
-                    plans_df = plans_df.loc[plans_df['n_rooms'] == self.fenv_config['fixed_num_rooms_for_loading']]
-                    plans_df = plans_df.reset_index()
-                
-            elif self.fenv_config['plan_config_source_name'] == 'inference_mode':
-                plans_df_path = os.path.join(self.fenv_config['the_scenario_dir'], 'plans.csv')
-                plans_df = pd.read_csv(plans_df_path)
-                
+            if self.fenv_config['plan_config_source_name'] in ['imitation_mode', 'offline_mode']:
+                plans_df = pd.read_csv(self.fenv_config['plan_path'])                
             elif self.fenv_config['plan_config_source_name'] in ['load_fixed_config', 'load_random_config']:
                     plans_df = pd.read_csv(self.fenv_config['plan_path'], nrows=self.fenv_config['nrows_of_env_data_csv'])
-                    if self.fenv_config['fixed_num_rooms_for_loading']:
-                        plans_df = plans_df.loc[plans_df['n_rooms'] == self.fenv_config['fixed_num_rooms_for_loading']]
-                        plans_df = plans_df.reset_index()
-                
             else:
-                raise("This is a wrong mode!")
+                raise ValueError(f"This is a wrong mode when you want to load saved plans! The current mode is {self.fenv_config['plan_config_source_name']}, and accepted ones are [imitation_mode, offline_mode, load_fixed_config, load_random_config] ")
+            
+            if self.fenv_config['fixed_num_rooms_for_loading']:
+                plans_df = plans_df.loc[plans_df['n_rooms'] == self.fenv_config['fixed_num_rooms_for_loading']]
+                plans_df = plans_df.reset_index()
                 
             plans_df = self._ast_literal_eval(plans_df)
-
+            
         else:
             plans_df = self.plans_df
             
+        # print(f"*-*-*-*-*-*-*-*-*-*-*-*- Plan CSV loaded from: \n {self.fenv_config['plan_path']}")
 
         return plans_df
             
@@ -281,7 +266,7 @@ class AdjustableConfigsHandeler:
                        'mask_numbers', 'mask_lengths', 'mask_widths', 'area_masked', 
                        'entrance_positions', 'entrance_coords',
                        'extended_entrance_positions', 'extended_entrance_coords',
-                       'n_facades_blocked', 'corridor_id', 'living_room_id']:
+                       'n_facades_blocked', 'lvroom_id']:
                 adjustable_configs[col] = np.asarray(this_plan_df[col].values.tolist(), dtype=int).tolist()[0]
          
         adjustable_configs['n_walls'] = adjustable_configs['n_rooms'] - 1
@@ -289,7 +274,7 @@ class AdjustableConfigsHandeler:
         adjustable_configs['masked_corners'] = this_plan_df['masked_corners'].values.tolist()[0]
         
         adjustable_configs['number_of_total_walls'] = adjustable_configs['n_walls'] + n_corners # adjustable_configs['mask_numbers']
-        adjustable_configs['number_of_total_rooms'] = adjustable_configs['n_rooms'] + n_corners # adjustable_configs['mask_numbers'] # TODO
+        adjustable_configs['number_of_total_rooms'] = adjustable_configs['n_rooms'] + n_corners # adjustable_configs['mask_numbers']
         
         areas_masked = this_plan_df['areas_masked'].values.tolist()[0]
         adjustable_configs['areas_masked'] = areas_masked
@@ -327,40 +312,55 @@ class AdjustableConfigsHandeler:
     def _configure_areas(self, n_rooms, area_masked, entrance_area):
         if self.fenv_config['plan_config_source_name'] in ['create_fixed_config', 'create_random_config']:
             free_area = self.fenv_config['total_area'] - area_masked - entrance_area
+            n_rooms_to_create = n_rooms - 1 # because the last room we dont create, as the last_room_areaa is free_area - other_areas
+            if self.fenv_config['randomly_create_lvroom_first']:
+                lvroom_portion = np.random.uniform(self.fenv_config['lvroom_portion_range'][0], self.fenv_config['lvroom_portion_range'][1])
+                lvroom_area = int(lvroom_portion * free_area)
+                free_area -= lvroom_area
+                n_rooms_to_create -= 1
+            
             middle_area = np.floor(free_area / n_rooms)
-            min_area = np.floor(middle_area/2)
-            max_area = min_area + middle_area
+            min_area = np.floor(middle_area/2) if n_rooms == 9 else self.fenv_config['min_acceptable_area']
+            max_area = np.floor(middle_area/2) + middle_area
+            
             while True:
-                areas_config_ = [list(np.random.randint(min_area, max_area, 1)/1.0)[0] for _ in range(n_rooms-1)]
+                areas_config_ = [list(np.random.randint(min_area, max_area, 1)/1.0)[0] for _ in range(n_rooms_to_create)]
                 sum_areas_except_last_room = np.sum(areas_config_)
                 last_room_area = free_area - sum_areas_except_last_room
-                if (last_room_area >= 10) and (last_room_area >= min_area) and (last_room_area <= max_area):
+                if (last_room_area >= self.fenv_config['area_inf']) and (last_room_area >= min_area) and (last_room_area <= max_area):
                     break
             areas_config_.append(last_room_area)
+            if self.fenv_config['randomly_create_lvroom_first']:
+                areas_config_.append(lvroom_area)
             areas_config_ = np.sort(areas_config_)[::-1]
             areas_config = {f"room_{i+self.fenv_config['min_room_id']}": a for i, a in enumerate(areas_config_)}
             assert len(areas_config) == n_rooms, "area_configs does not include proper number of rooms"
-            assert sum(areas_config_) == free_area, "sum of the all areas must be equal to the free area"
+            assert (sum(areas_config_) == free_area+lvroom_area) if self.fenv_config['randomly_create_lvroom_first'] else (sum(areas_config_) == free_area), "sum of the all areas must be equal to the free area"
+            if self.fenv_config['randomly_create_lvroom_first']: assert max(areas_config_) == lvroom_area, "lvroom should be the largest room"
         else:
-            raise ValueError("We dont need to call _configure_areas for this case.")
+            raise ValueError(f"We dont need to call _configure_areas for this mode. The current mode is {self.fenv_config['plan_config_source_name']} while the accepted ones are [create_fixed_config, create_random_config]")
             
         if any(a <= 0 for a in areas_config.values()):
-            raise ValueError('Area must be larger than 1.')
+            raise ValueError(f"Area must be larger than 1, while the areas here are: {areas_config}")
             
         return areas_config
     
     
     
     def _cluster_room_sizes(self, areas_desired):
-        if isinstance(areas_desired, dict):
-            areas_desired = list(areas_desired.values())
+        areas_desired_copy = copy.deepcopy(areas_desired)
+        if not self.fenv_config['is_agent_allowed_to_create_lvroom']:
+            lvroom_name = f"room_{self.fenv_config['lvroom_id']}"
+            del areas_desired_copy[lvroom_name]
+        if isinstance(areas_desired_copy, dict):
+            areas_desired_list = list(areas_desired_copy.values())
         else:
-            areas_desired = list(areas_desired)
+            areas_desired_list = list(areas_desired_copy)
             # if self.fenv_config['plan_config_source_name'] != 'longer_training_config':
-            raise ValueError('in _cluster_room_sizes of adjustable_config_handeler desiered_areas is a list')
-        
-        areas_desired = np.sort(areas_desired)[::-1]
-        diff = np.abs(np.diff(areas_desired))
+            raise ValueError(f"In _cluster_room_sizes of adjustable_config_handeler desiered_areas should be a list while the current type is {type(areas_desired)}")
+            
+        areas_desired_list = np.sort(areas_desired_list)[::-1]
+        diff = np.abs(np.diff(areas_desired_list))
         max_ind_2, max_ind_1 = np.argsort(diff, axis=0)[-2:]
         max_ind_1 += 1
         max_ind_2 += 1
@@ -368,19 +368,21 @@ class AdjustableConfigsHandeler:
         left = min(max_ind_1, max_ind_2)
         right = max(max_ind_1, max_ind_2)
         
-        room_i_list = np.array(range(len(areas_desired))) + self.fenv_config['min_room_id']
+        room_i_arr = np.array(range(len(areas_desired_list))) + self.fenv_config['min_room_id']
+        if not self.fenv_config['is_agent_allowed_to_create_lvroom']:
+            room_i_arr +=1 #room_i_arr[room_i_arr != self.fenv_config['lvroom_id']]
         
-        large_ids = room_i_list[:left]
-        medium_ids = room_i_list[left:right]
-        small_ids = room_i_list[right:]
+        large_ids = room_i_arr[:left]
+        medium_ids = room_i_arr[left:right]
+        small_ids = room_i_arr[right:]
 
-        large = areas_desired[:left]
-        medium = areas_desired[left:right]
-        small = areas_desired[right:]
+        large = areas_desired_list[:left]
+        medium = areas_desired_list[left:right]
+        small = areas_desired_list[right:]
         
         if len(large) == 0 or len(medium) == 0 or len(small) == 0:
             print("wait in _cluster_room_sizes of plan_constructor")
-            raise ValueError('Room clusters cannot be empty')
+            raise ValueError(f"Room clusters cannot be empty, while the current clusters are: large: {large}, medium: {medium}, small:{small}")
         
         room_i_per_size_category = {'large': list(large_ids),
                                     'medium': list(medium_ids),

@@ -14,7 +14,7 @@ from collections import defaultdict
 import torch
 from torchvision.transforms import transforms
 
-from torch_intermediate_layer_getter import IntermediateLayerGetter as MidGetter
+# from torch_intermediate_layer_getter import IntermediateLayerGetter as MidGetter
 
 from gym_floorplan.envs.observation.layout_graph import LayoutGraph
 

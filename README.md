@@ -1,6 +1,70 @@
-# SpaceLayoutGym
+# SpaceLayoutGym Environment
 
-`SpaceLayoutGym` is a simulator to design constraint-driven object-oriented space layouts. It is conveniently customizable to define new design scenarios, and compatible with OpenAI Gym, allowing for easy integration with RL libraries.
+This repository contains an OpenAI Gym compatible environment for space layout design.
 
-# Note
-Check other branches for more info.
+## Installation
+
+1. Clone this repository:
+   ```
+   git clone https://github.com/RezaKakooee/space_layout_gym.git
+   
+   ```
+
+2. Create and activate a Conda environment:
+   ```
+   conda create -n slg python=3.9
+   conda activate slg
+   ```
+
+3. Install the environment:
+   ```
+   cd space_layout_gym
+   pip install -e gym-floorplan
+   ```
+
+4. Install required packages:
+   ```
+   pip install -r requirements.txt
+   ```
+
+## Usage
+
+Here's a basic example of how to use the environment:
+
+```python
+from gym_floorplan.envs.fenv_config import LaserWallConfig
+from gym_floorplan.envs.master_env import SpaceLayoutGym
+
+fenv_config = LaserWallConfig().get_config()
+env = SpaceLayoutGym(fenv_config)
+
+obs = env.reset()
+
+done = False
+while not done:
+    action = env.action_space.sample()
+    obs, reward, done, truncated, info = env.step(action)
+    env.render()
+env.close()
+```
+
+## Training code
+We used different Deep RL libraries including `RLlib`, `StableBaselines3`, `CleanRL` and our custom built RL algorithms. However, we do not share the trainig code as we are still working on this research. Nonetheless, we provide initial codes showing how one can use `RLlib` and `StableBaselines3` with `SpaceLayoutGym` environment.
+
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Citation
+
+```bibtex
+@article{kakooee2024reimagining,
+  title={Reimagining space layout design through deep reinforcement learning},
+  author={Kakooee, Reza and Dillenburger, Benjamin},
+  journal={Journal of Computational Design and Engineering},
+  pages={qwae025},
+  year={2024},
+  publisher={Oxford University Press}
+}
+```

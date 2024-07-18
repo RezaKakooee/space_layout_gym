@@ -5,6 +5,8 @@ Created on Thu Aug  4 17:43:42 2022
 
 @author: Reza Kakooee
 """
+
+
 #%%
 import copy
 import numpy as np
@@ -14,7 +16,7 @@ import torch
 from gym_floorplan.envs.observation.fc_state_observer import FcStateObserver
 from gym_floorplan.envs.observation.cnn_state_observer import CnnStateObserver
 from gym_floorplan.envs.observation.meta_state_observer import MetaStateObserver
-from gym_floorplan.envs.observation.graph_state_observer import GraphStateObserver
+# from gym_floorplan.envs.observation.graph_state_observer import GraphStateObserver
 
 
 
@@ -58,9 +60,14 @@ class StateComposer:
         
         low_cnn = 0
         high_cnn = 255
-        shape_cnn = ( (self.fenv_config['n_channels'],
-                      (self.fenv_config['n_rows']) * self.fenv_config['cnn_scaling_factor'],
-                      (self.fenv_config['n_cols']) * self.fenv_config['cnn_scaling_factor'] ))
+        cnn_chanel_size = self.fenv_config['n_channels'] + (1 if self.fenv_config['distance_field_flag'] else 0)
+        shape_cnn = ( 
+            ( 
+              self.fenv_config['n_rows'] * self.fenv_config['cnn_scaling_factor'],
+              self.fenv_config['n_cols'] * self.fenv_config['cnn_scaling_factor'],
+              cnn_chanel_size
+            )
+        )
         
         low_meta = 0
         high_meta = highest_obs_val_fc
@@ -172,7 +179,12 @@ class StateComposer:
                                                                    'end_of_wall':   list(front_segment['reflection_coord']) })
                 except:
                     print("wait in _wall_data_extractor_for_single_agent of observation")
-                    raise ValueError('Probably number of walls does not match with the number of rooms')
+                    np.save("plan_data_dict__in_state_composer.py", plan_data_dict)
+                    message = f"""Probably number of walls does not match with the number of rooms. 
+                    The current walls_coords is {plan_data_dict['walls_coords']}, 
+                    the number of rooms is: len(plan_data_dict['areas_desired']), 
+                    and plan_id is {plan_data_dict['plan_id']}"""
+                    raise ValueError(message)
         
         coords = [[0, 0], [self.fenv_config['max_x'], 0], [0, self.fenv_config['max_y']], [self.fenv_config['max_x'], self.fenv_config['max_x']]]
         fake_wall_points = {f"wall_{i}": coord for i, coord in zip(self.fenv_config['fake_room_id_range'], coords)}
@@ -314,38 +326,61 @@ class StateComposer:
         if self.fenv_config['phase'] == 'test':
             plan_data_dict = FcStateObserver(self.fenv_config).get_observation(plan_data_dict, active_wall_name)
             plan_data_dict = CnnStateObserver(self.fenv_config).get_observation(plan_data_dict)
-            plan_data_dict = GraphStateObserver(self.fenv_config).get_observation(plan_data_dict, active_wall_name)
+            # plan_data_dict = GraphStateObserver(self.fenv_config).get_observation(plan_data_dict, active_wall_name)
             
         else:
             if self.fenv_config['net_arch'] in ['Fc', 'MetaFc', 'Gnn']:
                 plan_data_dict = FcStateObserver(self.fenv_config).get_observation(plan_data_dict, active_wall_name)
                 
-                
-            if self.fenv_config['net_arch'] in ['Cnn', 'MetaCnn']:
+            if self.fenv_config['net_arch'] in ['Cnn', 'MetaCnn'] or self.fenv_config['encode_img_obs_by_vqvae_flag']:
                 plan_data_dict = CnnStateObserver(self.fenv_config).get_observation(plan_data_dict)
                 
-                
-            if self.fenv_config['net_arch'] in ['Gnn']:
-                plan_data_dict = GraphStateObserver(self.fenv_config).get_observation(plan_data_dict, active_wall_name)
+            # if self.fenv_config['net_arch'] in ['Gnn']:
+            #     plan_data_dict = GraphStateObserver(self.fenv_config).get_observation(plan_data_dict, active_wall_name)
     
-            
         if 'Meta' in self.fenv_config['net_arch']:
-            plan_data_dict = MetaStateObserver(self.fenv_config).get_observation(plan_data_dict)
-            
-            
+            plan_data_dict = MetaStateObserver(self.fenv_config).get_observation(plan_data_dict)            
+        
         if self.fenv_config['net_arch'] == 'MetaFc':
-            observation_metafc = {
-                'observation_fc': plan_data_dict['observation_fc'],
-                'observation_meta': plan_data_dict['observation_meta']
-                }
+            if self.fenv_config['encode_img_obs_by_vqvae_flag']:
+                observation_fc = plan_data_dict['observation_latent_fc']
+            else:
+                observation_fc = plan_data_dict['observation_fc']
+                
+            if self.fenv_config['meta_observation_type'] == 'tuple':
+                observation_metafc = (
+                    observation_fc,
+                    plan_data_dict['observation_meta']
+                )
+            elif self.fenv_config['meta_observation_type'] == 'dict':
+                observation_metafc = {
+                    'observation_fc': observation_fc,
+                    'observation_meta': plan_data_dict['observation_meta']
+                    }
+            elif self.fenv_config['meta_observation_type'] == 'list':
+                observation_metafc = np.concatenate((observation_fc, plan_data_dict['observation_meta']))
+            else:
+                raise ValueError('meta_observation_type should be either tuple, dict or list')
+                
             plan_data_dict.update({
                 'observation_metafc': observation_metafc
                 })
+            
         elif self.fenv_config['net_arch'] == 'MetaCnn':
-            observation_metacnn = {
-                'observation_cnn': plan_data_dict['observation_cnn'],
-                'observation_meta': plan_data_dict['observation_meta']
-                }
+            if self.fenv_config['meta_observation_type'] == 'tuple':
+                observation_metacnn = (
+                    plan_data_dict['observation_cnn'],
+                    plan_data_dict['observation_meta']
+                )
+            elif self.fenv_config['meta_observation_type'] == 'dict':
+                observation_metacnn = {
+                    'observation_cnn': plan_data_dict['observation_cnn'],
+                    'observation_meta': plan_data_dict['observation_meta']
+                    }
+            elif self.fenv_config['meta_observation_type'] == 'list':
+                observation_metacnn = np.concatenate((plan_data_dict['observation_cnn'].flatten(), plan_data_dict['observation_meta']))
+            else:
+                raise ValueError('meta_observation_type should be either tuple, dict or list')
             plan_data_dict.update({
                 'observation_metacnn': observation_metacnn
                 })

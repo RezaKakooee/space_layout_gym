@@ -24,7 +24,8 @@ class Render(BaseRender):
 
 
     def render(self, plan_data_dict, episode, ep_time_step):
-        self.render_plan.render(plan_data_dict, episode, ep_time_step)
+        image_path = self.render_plan.render(plan_data_dict, episode, ep_time_step)
+        return image_path
 
     
 

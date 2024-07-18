@@ -6,8 +6,11 @@ Created on Tue Aug  3 23:40:09 2021
 """
 # %%
 
+
+import os
 import math
 import copy
+import inspect
 import numpy as np
 from scipy import ndimage as ndi
 
@@ -97,8 +100,13 @@ class RoomExtractor:
         try:
             min_room_unique_possible_id = room_unique_possible_ids[np.argmin(possible_areas)]
         except:
-            print('wait in room_extractor')
-            raise ValueError("possible_areas is empty")
+            np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_1.npy", plan_data_dict)
+            message = f"""
+            in room_extractor possible_areas is empty: {possible_areas},
+            plan_id is: {plan_data_dict['plan_id']}
+            """
+            raise ValueError(message)
+            
         obs_moving_labels[labels==min_room_unique_possible_id] = room_i
         # obs_moving_labels = np.multiply(obs_moving_labels, obs_mat_for_dot_prod)
         this_wall_len = len(np.argwhere(plan_data_dict['obs_mat_w'] == -wall_i ))
@@ -112,8 +120,14 @@ class RoomExtractor:
                 try:
                     plan_data_dict['areas_delta'].update({room_name: this_room_area - plan_data_dict['areas_desired'][room_name]})
                 except:
-                    print('wait in _update_plan_data_dict_based_on_room_areas of room_extractor')
-                    raise ValueError("room_name is not exist")
+                    np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_2.npy", plan_data_dict)
+                    message = f"""
+                    sth is wrong here.
+                    room_i: {room_i}, 
+                    
+                    """
+                    # plan_id is: {plan_data_dict['plan_id']}
+                    raise ValueError(message)
                     
         else:
             plan_data_dict['areas_delta'].update({room_name: this_room_area - plan_data_dict['areas_desired'][room_name]})
@@ -133,8 +147,8 @@ class RoomExtractor:
             try:
                 plan_data_dict['rooms_dict'].update({last_room_name: {}})
             except:
-                print('watin in _update_plan_data_dict_based_on_room_areas of room_extractor')
-                raise('local variable last_room_name referenced before assignment')
+                np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_3.npy", plan_data_dict)
+                raise ValueError(f"local variable last_room_name of {last_room_name} referenced before assignment")
             
             max_area = np.max(possible_areas)
             if possible_areas[0] == possible_areas[1]:
@@ -149,8 +163,8 @@ class RoomExtractor:
             try:
                 plan_data_dict['areas_delta'].update({last_room_name: max_area - plan_data_dict['areas_desired'][last_room_name]})
             except:
-                print('wait in _update_plan_data_dict_based_on_room_areas of room_extractor')
-                raise ValueError('Probably room index does not index!')
+                np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_4.npy", plan_data_dict)
+                raise ValueError(f"Probably room index does not index! last_room_i is: {last_room_i})")
             plan_data_dict['rooms_dict'].update({last_room_name: {}})
             plan_data_dict['rooms_dict'][last_room_name].update({"room_area": max_area})
             plan_data_dict['rooms_dict'][last_room_name].update({"room_pure_area": max_area})
@@ -197,17 +211,25 @@ class RoomExtractor:
         room_height = contours_height -1
         room_width = contours_width - 1
         
-        if plan_data_dict['rooms_dict'][room_name]['room_pure_area'] == (room_height * room_width): # it means that the new room has certanily rectangle shape
+        if room_i in self.fenv_config['real_room_id_range']:
+            if plan_data_dict['rooms_dict'][room_name]['room_pure_area'] == (room_height * room_width): # it means that the new room has certanily rectangle shape
+                room_shape = "rectangular"
+                aspect_ratio = max(room_height, room_width) / min(room_height, room_width)
+                if ('aspect_ratio_desired' in plan_data_dict.keys() and room_i > self.fenv_config['lvroom_id']):
+                    delta_aspect_ratio = abs(aspect_ratio - plan_data_dict['aspect_ratio_desired'][room_name])
+                else:
+                    delta_aspect_ratio = abs(aspect_ratio - self.fenv_config['desired_aspect_ratio'])
+            else:
+                ### note that a room could have non-rectangle shape. 
+                ### But still we store its properties for now, and then 
+                ### we partition it to sub-rectangles
+                room_shape = "nonrectangular"
+                aspect_ratio = None
+                delta_aspect_ratio = None       
+        else:
             room_shape = "rectangular"
             aspect_ratio = max(room_height, room_width) / min(room_height, room_width)
-            delta_aspect_ratio = abs (aspect_ratio - self.fenv_config['desired_aspect_ratio'])
-        else:
-            ### note that a room could have non-rectangle shape. 
-            ### But still we store its properties for now, and then 
-            ### we partition it to sub-rectangles
-            room_shape = "nonrectangular"
-            aspect_ratio = None
-            delta_aspect_ratio = None            
+            delta_aspect_ratio = 0
         
         plan_data_dict['rooms_dict'][room_name].update({'room_shape': room_shape})
         plan_data_dict['rooms_dict'][room_name].update({'room_height': room_height})
@@ -259,7 +281,11 @@ class RoomExtractor:
             
             aspect_ratio = min(aspect_ratio, aspect_ratio_)
             
-            delta_aspect_ratio = abs(aspect_ratio - self.fenv_config['desired_aspect_ratio'])
+            room_i = int(room_name.split('_')[1])
+            if ('aspect_ratio_desired' in plan_data_dict.keys() and room_i > self.fenv_config['lvroom_id']):
+                delta_aspect_ratio = abs(aspect_ratio - plan_data_dict['aspect_ratio_desired'][room_name])
+            else:
+                delta_aspect_ratio = abs(aspect_ratio - self.fenv_config['desired_aspect_ratio'])
 
             all_rects_positions = {key: [] for key in all_rects}
             for sub_r, rc in all_rects.items():

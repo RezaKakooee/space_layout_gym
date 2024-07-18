@@ -7,7 +7,9 @@ Created on Thu Jun 30 17:48:55 2022
 """
 
 # %% 
+import os
 import copy
+import inspect
 import itertools
 import numpy as np
 from collections import defaultdict
@@ -52,9 +54,24 @@ class LayoutGraph:
     
     
     
+    def _remove_masked_areas_from_facade_edge_list(self, lst):
+        new_lst = []
+        for ed in lst:
+            if not ((ed[0] in self.fenv_config['fake_room_id_range']) or (ed[1] in self.fenv_config['fake_room_id_range'])):
+                new_lst.append(ed)
+        return new_lst
+    
+    
+    
     def extract_graph_data(self):
         pure_edge_list, pure_facade_edge_list, pure_entrance_edge_list = self._dense_graph_data_extractor(self.rag)
         projected_pure_edge_list, projected_pure_facade_edge_list, projected_pure_entrance_edge_list = self._dense_graph_data_extractor(self.projected_rag)
+        
+        
+        pure_facade_edge_list = self._remove_masked_areas_from_facade_edge_list(pure_facade_edge_list) # Feb 23, 2024
+        projected_pure_facade_edge_list = self._remove_masked_areas_from_facade_edge_list(projected_pure_facade_edge_list) # Feb 23, 2024
+        
+        
         
         if self.plan_data_dict['active_wall_status'] not in ['badly_stopped', 'well_finished']:
             pure_edge_list = self._remove_edge_including_zero(pure_edge_list)
@@ -79,16 +96,21 @@ class LayoutGraph:
         
         edge_list_entrance_achieved_str = self._convert_entrance_edge_list_to_str(edge_list_entrance_achieved)
         
-        state_adj_matrix = self._get_adj_matrix(self.fenv_config['max_room_id'], edge_list_room_achieved + edge_list_facade_achieved)
-        
         # use the 1st two for making adj_vec, and use the 2nd two for making reward
-        
+
+        edge_list_room_achieved = self.remove_non_real_rooms(edge_list_room_achieved)
+        edge_list_facade_achieved = self.remove_non_real_rooms(edge_list_facade_achieved)
+        edge_list_facade_achieved_str = self.remove_non_real_rooms(edge_list_facade_achieved_str)
+        edge_list_entrance_achieved, edge_list_entrance_achieved_str = self.clean_edge_list_entrance_achieved(edge_list_entrance_achieved, edge_list_entrance_achieved_str)
+
         all_edges = (
             edge_list_room_achieved + 
             edge_list_facade_achieved +
             [[self.fenv_config['entrance_cell_id'], e] for e in edge_list_entrance_achieved]
             )
         
+        state_adj_matrix = self._get_adj_matrix(self.fenv_config['max_room_id'], edge_list_room_achieved + edge_list_facade_achieved)
+
         edge_dict = {
             'edge_list_room_achieved': edge_list_room_achieved,
             'edge_list_facade_achieved': edge_list_facade_achieved,
@@ -102,10 +124,30 @@ class LayoutGraph:
         return edge_dict
     
     
-    
+
+    def remove_non_real_rooms(self, lst):
+        return [edge for edge in lst if edge[0] not in self.fenv_config['fake_room_id_range'] and edge[1] not in self.fenv_config['fake_room_id_range']]
+
+
+
+    def clean_edge_list_entrance_achieved(self, edge_list_entrance_achieved, edge_list_entrance_achieved_str):
+        edge_list_entrance_achieved_str_cleaned = []
+        for ed in edge_list_entrance_achieved_str:
+            if (isinstance(ed[0], str) and isinstance(ed[1], str) and 
+                ed[1] != self.plan_data_dict['entrance_is_on_facade']):
+                pass
+            else:
+                edge_list_entrance_achieved_str_cleaned.append(ed)
+        edge_list_entrance_achieved_cleaned = self._convert_entrance_edge_list_to_str(edge_list_entrance_achieved_str_cleaned)
+        return edge_list_entrance_achieved_cleaned, edge_list_entrance_achieved_str_cleaned
+
+
+
     def _dense_graph_data_extractor(self, rg):
         num_nodes = rg.number_of_nodes()
         edge_list = list(rg.edges)
+        if self.fenv_config['exclude_fake_rooms_from_adjacency_from_beginning']:
+            edge_list = [edge for edge in edge_list if (edge[0] in self.fenv_config['real_room_id_range'] and edge[1] in self.fenv_config['real_room_id_range'])]
         pure_edge_list, pure_facade_edge_list, pure_entrance_edge_list = self.__separate_facade_edge_list_from_edge_list(edge_list)
         return pure_edge_list, pure_facade_edge_list, pure_entrance_edge_list
         
@@ -134,8 +176,14 @@ class LayoutGraph:
                                 pure_edge_list.append(ed)
         
         pure_edge_list.sort()
-        pure_facade_edge_list.sort()    
-        return pure_edge_list, pure_facade_edge_list, pure_entrance_edge_list
+        pure_facade_edge_list.sort() 
+        pure_facade_edge_list_copy = []
+        for edge in pure_facade_edge_list:
+            if edge[0] in self.fenv_config['facade_id_range']:
+                pure_facade_edge_list_copy.append([edge[0], edge[1]])
+            else:
+                pure_facade_edge_list_copy.append([edge[1], edge[0]])
+        return pure_edge_list, pure_facade_edge_list_copy, pure_entrance_edge_list
     
     
     
@@ -173,8 +221,13 @@ class LayoutGraph:
                 state_adj_matrix[edge[0]-1, edge[1]-1] = 1
                 state_adj_matrix[edge[1]-1, edge[0]-1] = 1
         except:
-            print('in layout graph: some index might be wrong')
-            raise IndexError('some index might be wrong')
+            np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", self.plan_data_dict)
+            message = f"""
+            Some index might be wrong. The current edge_list is {edge_list},
+            plan_id is: {self.plan_data_dict['plan_id']}
+            
+            """
+            raise IndexError(message)
         return state_adj_matrix
     
     

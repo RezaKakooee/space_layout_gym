@@ -8,7 +8,9 @@ Created on Fri Feb 24 23:49:11 2023
 
 
 #%%
-def get_color_dict(phase='debug'):
+def get_color_dict(fenv_config):
+    phase = fenv_config['phase']
+    
     color_map = {
         1: 'silver', 
         
@@ -33,8 +35,19 @@ def get_color_dict(phase='debug'):
         17: 'darkcyan', #'mediumvioletred', 
         18: 'orange', 
         19: 'aqua', 
-        
         20: 'yellow',
+        
+        21: 'darkslategray',
+        22: 'darkolivegreen',
+        23: 'midnightblue',
+        24: 'darkred',
+        25: 'darkslateblue',
+        26: 'darkgoldenrod',
+        27: 'saddlebrown',
+        28: 'indigo',
+        29: 'maroon',
+        30: 'darkmagenta',
+        
         }
     
     outline_color = 'silver'
@@ -49,11 +62,11 @@ def get_color_dict(phase='debug'):
         }
     
     wall_colors.update({
-        f"wall_{i}_back_segment": outline_color for i in range(2, 10)
+        f"wall_{i}_back_segment": outline_color for i in range(2, fenv_config['entrance_cell_id'])
         })
     
     wall_colors.update({
-        f"wall_{i}_front_segment": outline_color for i in range(2, 10)
+        f"wall_{i}_front_segment": outline_color for i in range(2, fenv_config['entrance_cell_id'])
         })
         
     room_colors = {
@@ -77,12 +90,11 @@ def get_color_dict(phase='debug'):
             }
     
     room_colors.update({
-        f"room_{i}": outline_color for i in range(2, 10)
+        f"room_{i}": outline_color for i in range(2, fenv_config['entrance_cell_id'])
         })
     
     
-    for i in range(11, 20):
-        min_real_room_id = 10
+    for i in fenv_config['real_room_id_range']:
         if phase in ['train', 'debug']: # TODO, Maybe remove the test
             wall_colors.update({f"wall_{i}_back_segment": color_map[i],
                                 f"wall_{i}_front_segment": color_map[i]})

@@ -1,0 +1,20 @@
+scipy
+bezier
+webcolors
+matplotlib
+seaborn
+scikit-image
+shapely
+numpy
+pandas
+python-dotenv
+gymnasium
+tensorboard
+wandb
+# h5py
+# datasets
+# transformers
+# jsonlines
+# stable-baselines3
+# torch==2.0.0+cu117
+# torchvision==0.15.1+cu117

@@ -83,22 +83,17 @@ class PlanConstructor:
         required_rooms_one_hot = [0] * self.fenv_config['maximum_num_real_rooms']
         required_rooms_one_hot[:plan_data_dict['n_rooms']] = [1] * plan_data_dict['n_rooms']
         
-        corridor_id_one_hot = [0] * self.fenv_config['maximum_num_real_rooms']
-        if 'corridor_id' in plan_data_dict.keys():
-            corridor_id_one_hot[plan_data_dict['corridor_id'] - self.fenv_config['min_room_id']] = 1
-        
-        living_room_id_one_hot = [0] * self.fenv_config['maximum_num_real_rooms']
-        if 'living_room_id' in plan_data_dict.keys():
-            living_room_id_one_hot[plan_data_dict['living_room_id'] - self.fenv_config['min_room_id']] = 1
+        lvroom_id_one_hot = [0] * self.fenv_config['maximum_num_real_rooms']
+        if 'lvroom_id' in plan_data_dict.keys():
+            lvroom_id_one_hot[plan_data_dict['lvroom_id'] - self.fenv_config['min_room_id']] = 1
         
         desc = []
         # desc += [plan_data_dict['mask_numbers']]
-        desc += masked_corners_on_hot # 4*1
+        desc += masked_corners_on_hot # size = 4*1
         desc += facades_blocked_one_hot # 4*1
         desc += entrance_is_on_facade_one_hot # 4*1
         desc += required_rooms_one_hot # 9*1 
-        desc += corridor_id_one_hot # 9*1, why 8: bc i excluded the entrace as a room
-        desc += living_room_id_one_hot # 9*1
+        # desc += lvroom_id_one_hot # 9*1 # 2024-02-05: I excluded this, as lvroom_id is alwasys 11
         desc += mask_len_vec # 4*1
         desc += mask_wid_vec # 4*1
         desc += list(itertools.chain.from_iterable(plan_data_dict['extended_entrance_coords'])) # 8*1
