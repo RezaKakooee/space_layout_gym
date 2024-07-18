@@ -27,6 +27,14 @@ This repository contains an OpenAI Gym compatible environment for space layout d
    pip install -r requirements.txt
    ```
 
+5. Create a `.env` file in the root directory of the project and add the following variable:
+   ```
+   HOUSING_DESIGN_ROOT_DIR=path/to/space_layout_gym
+   ```
+   Replace `path/to/space_layout_gym` with the actual path to your space_layout_gym directory.
+
+
+
 ## Usage
 
 Here's a basic example of how to use the environment:
@@ -49,7 +57,8 @@ env.close()
 ```
 
 ## Training code
-We used different Deep RL libraries including `RLlib`, `StableBaselines3`, `CleanRL` and our custom built RL algorithms. However, we do not share the trainig code as we are still working on this research. Nonetheless, we provide initial codes showing how one can use `RLlib` and `StableBaselines3` with `SpaceLayoutGym` environment.
+## TODO
+- [ ] We used various Deep RL libraries including `RLlib`, `StableBaselines3`, `CleanRL` and our custom built RL algorithms. However, we do not share the trainig code as we are still working on this research. Nonetheless, we provide initial codes examples showing how one can use `RLlib` and `StableBaselines3` with `SpaceLayoutGym` environment.
 
 
 ## License

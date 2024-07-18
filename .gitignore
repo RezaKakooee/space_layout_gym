@@ -96,6 +96,7 @@ d3rlpy_data
 *.html
 *.json
 *.log
+*.yaml
 
 
 

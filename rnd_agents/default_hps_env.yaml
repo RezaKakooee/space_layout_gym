@@ -1,4 +1,4 @@
-library: SB
+library: SLG
 ## env
 env_name: SpaceLayoutGym-v0
 ## reward
