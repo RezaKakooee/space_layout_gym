@@ -275,27 +275,21 @@ class SpaceLayoutGym(gym.Env):#(MultiAgentEnv):
 
 #%% This is only for testing and debugging
 if __name__ == "__main__":
-    from gym_floorplan.envs.fenv_scenarios import FEnvScenarios
     from gym_floorplan.envs.fenv_config import LaserWallConfig
-    
-    default_config = {
+    hyper_params = {
         'agent_name': 'RND',
-        'phase': 'debug',
-        
-        'action_masking_flag': False,
-        'rewarding_method_name': 'Smooth_Quad_Reward', # Smooth_Linear_Reward, Smooth_Exp_Reward, Smooth_Quad_Reward
-        'cnn_observation_name': 'rooms_cmap',
-        'model_last_name': 'MetaFcNet', # TinyFcNet, TinyCnnNet, MetaCnnNet, MetaFcNet
+        'phase': 'train',
+        'n_rooms': 7,
+        'plan_config_source_name': 'fixed_test_config', #'imitation_mode',
+        'model_last_name': 'MetaCnnEncoder',
+        'scenario_name': 'debug',
         }
-    
-    fenv_config = LaserWallConfig(agent_name=default_config['agent_name'], 
-                                  phase=default_config['phase'], 
-                                  scenarios_dict=scenarios_dict).get_config()
-    
-    
+    fenv_config = LaserWallConfig(phase=hyper_params['phase'], 
+                                  hyper_params=hyper_params).get_config()
     self = SpaceLayoutGym(fenv_config)
     s0, _ = self.reset()
     a = self.action_space.sample()
+    a = {"agent_1": 2}
     s, _, _, _, _= self.step(a)
     
     from ray.rllib.utils import check_env
