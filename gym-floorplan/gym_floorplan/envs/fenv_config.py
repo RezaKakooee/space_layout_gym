@@ -832,7 +832,7 @@ class LaserWallConfig:
 
 
 
-# %%
+#%% This is only for testing and debugging
 if __name__ == '__main__':
     self = LaserWallConfig()
     fenv_config = self.get_config()

@@ -639,7 +639,7 @@ class AdjustableConfigsHandeler:
         
 
 
-#%%
+#%% This is only for testing and debugging
 if __name__ == '__main__':
     from gym_floorplan.envs.fenv_config import LaserWallConfig
     fenv_config = LaserWallConfig().get_config()

@@ -312,18 +312,13 @@ def get_fixed_scenario(n_rooms):
 
 
 
-#%%
-if __name__ == '__main__':
+#%% This is only for testing and debugging
     def _image_coords2cartesian(r, c, n_rows=23):
         return c, n_rows-1-r 
-    
     extended_entrance_positions = [[22, 5], [22, 6], [21, 5], [21, 6]]
-    
     extended_entrance_coords = []
     for r, c in extended_entrance_positions:
         x, y = _image_coords2cartesian(r, c)
         extended_entrance_coords.append([x, y])
-    
-    
     print(extended_entrance_coords)
     get_fixed_scenario(n_rooms=4)

@@ -29,11 +29,10 @@ import pandas as pd
 from tqdm import tqdm
 from pprint import pprint
 import gymnasium as gym
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 
 from rnd_logger import RandomAgentLogger
 
-import gym_floorplan
 from gym_floorplan.envs.fenv_config import LaserWallConfig
 from gym_floorplan.envs.reward.metrics import Metrics
 
@@ -46,16 +45,9 @@ class EnvMaker():
         self.env_name = fenv_config['env_name']
         
         
-        
     def make(self):
-        if self.env_name == 'gym':
-            env = gym.make(self.env_name)
-            env.env_name = self.env_name
-        else:
-            from gym_floorplan.envs.master_env import SpaceLayoutGym
-            env = SpaceLayoutGym(self.fenv_config)
-            # from ray.rllib.utils import check_env
-            # check_env(env)
+        from gym_floorplan.envs.master_env import SpaceLayoutGym
+        env = SpaceLayoutGym(self.fenv_config)
         return env
     
     
@@ -70,22 +62,15 @@ class RandomAgent:
         self.env = EnvMaker(self.fenv_config).make()
         
         self.logger = RandomAgentLogger(fenv_config, agent_config)
-
-        self.time_dict_random_agent = defaultdict(dict)
         
         
 
     def _get_random_action(self, obs):
         if self.fenv_config['action_masking_flag']:
             action_mask = obs['action_mask']
-            # print(f"Num of left actions: {np.sum(action_mask)}")
-            try:
-                action = np.random.choice(np.arange(self.fenv_config['n_actions']), 
-                                          size=1, replace=False, 
-                                          p=np.array(action_mask)/(sum(action_mask)))
-            except:
-                print("wait for checking action_mask")
-                raise("seems no action left to be selected!")
+            action = np.random.choice(np.arange(self.fenv_config['n_actions']), 
+                                        size=1, replace=False, 
+                                        p=np.array(action_mask)/(sum(action_mask)))
         else:
             action = np.random.randint(0, self.fenv_config['n_actions'], 1)
         return action[0]
@@ -141,11 +126,7 @@ class RandomAgent:
                 ep_info_dict = defaultdict(list)
                 ep_steper = 0
                 
-                ep_obs_list = []
                 ep_action_list = []
-                ep_reward_list = []
-                ep_done_list = []
-                ep_next_obs_list = []
 
                 while not done:# and ep_steper<=7:
                     if ( (self.agent_config['fixed_action_seq_flag'] or self.fenv_config['plan_config_source_name'] == 'imitation_mode') and 
@@ -158,15 +139,10 @@ class RandomAgent:
                         action = self._get_random_action(observation)
                         
                     # action = action if ep_steper <= 5 else 0
-                    # ep_obs_list.append(observation)
                     observation, reward, done, truncated, info = self.env.step(action=action)
 
-                    # ep_next_obs_list.append(observation)
                     ep_action_list.append(action)
-                    # ep_reward_list.append(reward)
-                    # ep_done_list.append(done)
                     
-                    # print(np.max(observation['observation_cnn']))
                     self.sum_episode_rewards += reward
                     episode_rewards.append(reward)
                     
@@ -177,7 +153,6 @@ class RandomAgent:
                     
                     if self.fenv_config['only_save_high_quality_env_data']:
                         if done:
-                            # self.logger.end_episode(self.env.obs.plan_data_dict, self.episode_good_action_sequence, reward, self.env.ep_time_step+1, self.env.obs.active_wall_status)
                             self.end_episode_reward[i] = reward
                             self.episode_len[i] = self.env.ep_time_step+1
                             
@@ -193,11 +168,6 @@ class RandomAgent:
                                 num_failures += 1
                                 if self.agent_config['print_verbose'] >= 1: print('Failed')
                             if self.agent_config['render_verbose'] >= 1: self.env.render()
-                            if self.agent_config['render_verbose'] >= 3: self.env.display()
-                            if self.agent_config['render_verbose'] >= 3: self.env.illustrate()
-                            if self.agent_config['render_verbose'] >= 3: self.env.demonestrate()
-                            if self.agent_config['render_verbose'] >= 3: self.env.exibit()
-                            if self.agent_config['render_verbose'] >= 3: self.env.view()
                             if self.agent_config['render_verbose'] >= 3: self.env.portray()
                             
                             break
@@ -260,7 +230,6 @@ class RandomAgent:
             
     def save_lh_df(self):
         if self.agent_config['save_low_high_quality_data_flag']:
-            ## convert to dataframes and save
             self.df_lh = pd.DataFrame.from_dict(self.low_high_quality_data).T
             if not os.path.exists(self.agent_config['scenario_dir']):
                 os.makedirs(self.agent_config['scenario_dir'])

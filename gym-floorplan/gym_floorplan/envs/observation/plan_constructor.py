@@ -16,14 +16,10 @@ import pandas as pd
 
 import torch
 
-# from torch_geometric.data import Data
-
 from gym_floorplan.envs.observation.geometry import Outline, Plan
 from gym_floorplan.envs.observation.wall_generator import WallGenerator
-
 from gym_floorplan.envs.observation.sequential_painter import SequentialPainter
 from gym_floorplan.envs.observation.room_extractor import RoomExtractor
-
 from gym_floorplan.envs.adjustable_configs_handeler import AdjustableConfigsHandeler
 
 
@@ -478,16 +474,12 @@ class PlanConstructor:
     
     
     
-#%%
+#%% This is only for testing and debugging
 if __name__ == '__main__':
     from gym_floorplan.envs.fenv_config import LaserWallConfig
     fenv_config = LaserWallConfig().get_config()
-    
-    
     self = PlanConstructor(fenv_config)
-    
     for _ in range(1):
-        
         plan_data_dict = self.get_plan_data_dict()
         print(plan_data_dict['mask_numbers'])
     

@@ -751,26 +751,3 @@ class MetaCnnNetPreTrainedEncoder(nn.Module):
     def forward(self, real_obs):
         return self.encoder(real_obs)
         
-    
-    
-# p = '/home/rdbt/ETHZ/dbt_python/housing_design/storage_nobackup/rlb_agents_storage/tunner/Prj__2024_04_10_1800__rlb__bc2ppo__2nd_paper/Scn__2024_04_10_1805__PTM__ZSLR__BC/model/modelsd.pt'   
-
-# class MiniResidualCnnEncoder(nn.Module):
-#     def __init__(self, cfg):
-#         super(MiniResidualCnnEncoder, self).__init__()
-        
-#         self.cfg = cfg
-#         self.image_net = ResNetXCnnEncoder(self.cfg) if self.cfg['image_encoder_type'] == 'ResNetXCnnEncoder' else MiniResidualCnnEncoder(self.cfg)
-            
-
-#     def forward(self, real_obs):
-#         obs_cnn = real_obs
-
-#         if obs_cnn.shape[3] in [1, 3]: 
-#             obs_cnn = obs_cnn.permute(0, 3, 1, 2)
-#         else:
-#             assert obs_cnn.shape[1] in [1, 3], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
-
-#         image_emd = self.image_net(obs_cnn)
-
-#         return image_emd

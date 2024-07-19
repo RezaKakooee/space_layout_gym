@@ -273,11 +273,10 @@ class SpaceLayoutGym(gym.Env):#(MultiAgentEnv):
 
 
 
-# %%
+#%% This is only for testing and debugging
 if __name__ == "__main__":
     from gym_floorplan.envs.fenv_scenarios import FEnvScenarios
     from gym_floorplan.envs.fenv_config import LaserWallConfig
-    
     
     default_config = {
         'agent_name': 'RND',
@@ -288,13 +287,6 @@ if __name__ == "__main__":
         'cnn_observation_name': 'rooms_cmap',
         'model_last_name': 'MetaFcNet', # TinyFcNet, TinyCnnNet, MetaCnnNet, MetaFcNet
         }
-    
-    
-    scenarios_dict = FEnvScenarios(agent_name=default_config['agent_name'], 
-                                   action_masking_flag=default_config['action_masking_flag'], 
-                                   cnn_observation_name=default_config['cnn_observation_name'],
-                                   rewarding_method_name=default_config['rewarding_method_name'],
-                                   model_last_name=default_config['model_last_name']).get_scenarios()
     
     fenv_config = LaserWallConfig(agent_name=default_config['agent_name'], 
                                   phase=default_config['phase'], 

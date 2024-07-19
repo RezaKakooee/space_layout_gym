@@ -252,7 +252,7 @@ class LayoutGraph:
             
 
     
-#%%
+#%% This is only for testing and debugging
 if __name__ == "__main__":
      m = np.array(
        [[19, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 19],

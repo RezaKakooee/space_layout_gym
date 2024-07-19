@@ -232,9 +232,9 @@ class Metrics:
         plt.show()  # Display the plots
         
         
-# #%%
+#%% This is only for testing and debugging
 if __name__ == '__main__':
-    path = "/scicore/home/graber0001/kakooe0000/housing_design/storage_nobackup/sb_agents_storage/Prj__2024_04_20_1010__sb__bc2ppo/Scn__2024_04_20_082331__PTM____ZSLR__BC/result/metrics.csv"
+    path = "~/housing_design/storage_nobackup/sb_agents_storage/Prj__2024_04_20_1010__sb__bc2ppo/Scn__2024_04_20_082331__PTM____ZSLR__BC/result/metrics.csv"
     result_dir = os.path.dirname(path)
     self = Metrics({})
     self.metrics_df = pd.read_csv(path)

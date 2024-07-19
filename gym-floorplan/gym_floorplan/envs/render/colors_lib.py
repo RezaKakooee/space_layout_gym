@@ -124,6 +124,6 @@ def outline_color():
 
 
 
-#%%
+#%% This is only for testing and debugging
 if __name__ == '__main__':
     wall_colors, room_colors = get_color_dict()

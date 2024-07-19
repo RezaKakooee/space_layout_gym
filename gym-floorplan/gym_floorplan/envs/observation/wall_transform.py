@@ -15,27 +15,6 @@ from gym_floorplan.envs.observation.wall_generator import WallGenerator
 #%%
 class WallTransform:
     def __init__(self, wall_name:str=None, wall_coords:dict=None, action_i:int=None, plan_data_dict=None, fenv_config:dict=None):
-        """
-        Receives a wall, and and action, then transforms the wall based on the
-        action. 
-
-        Parameters
-        ----------
-        wall_name : str, mandatory
-            The name of the input wall.
-        wall_coords : dict, mandatory
-            A dict includes input wall data.
-        action : int, mandatory
-            The action selected by the agent
-        fenv_config : dict, mandatory
-            A dict including env data.
-
-        Returns
-        -------
-        A transformed wall if feasible. Transformation is not possible for all
-        actions. Some actions are invalid, and some do not change the wall.
-
-        """
         self.wall_name = wall_name
         self.wall_coords = wall_coords
         self.transformed_wall_coords = copy.deepcopy(wall_coords)
@@ -52,20 +31,6 @@ class WallTransform:
         self.plan_data_dict = plan_data_dict
         
     def transform(self):
-        """
-        The main method to transform the input wall
-
-        Raises
-        ------
-        ValueError
-            DESCRIPTION.
-
-        Returns
-        -------
-        TYPE
-            A transformed wall if possible.
-
-        """
         self.dynamic_coords = self._get_dynamic_coords()
         self.transformer_matrix = self._get_transformer(self.action_name)
         
@@ -167,16 +132,6 @@ class WallTransform:
                 raise ValueError(f"Wall_transform, there is something wrong here. The wall_coords is: {wall_coords}")
         
     def _get_dynamic_coords(self):
-        """
-        According to the action, determines which segment of the input wall 
-        should be transfered: back, front or both.
-
-        Returns
-        -------
-        dynamic_coords : TYPE
-            A dict consists of the coords of the dynamic segments.
-
-        """
         if 'front' in self.action_name:
             dynamic_coords = self.front_coords
         elif 'back' in self.action_name:
@@ -187,22 +142,6 @@ class WallTransform:
     
     
     def _get_transformer(self, action_name:str=None):
-        """
-        Based on the input actions define the transformation matrix
-
-        Parameters
-        ----------
-        action_name : str, mandatory
-            The of the action selected by the agent
-
-        Returns
-        -------
-        M: list
-            The transformation correspods to the selected action.
-            If action is not move, flip, or rotate, means that the action is 
-            resizing the wall's segement. In this case there is not 
-            transformation matrix. So, the methods return an empty list
-        """
         if 'move' in self.action_name:
             tx, ty = self.fenv_config['translation_mat_dict'][action_name]
             M = self._get_translation_matrix(tx, ty, self.fenv_config['seg_length'])
@@ -223,24 +162,6 @@ class WallTransform:
     
     @staticmethod  
     def _get_translation_matrix(tx:int, ty:int, step_size:int):
-        """
-        The action selected by the agent is 'move'. So, this method generates
-        a translation matrix corresponds to the selected action.
-        Parameters
-        ----------
-        tx : int
-            The amount of movment along the x axis, can be -1, 0, +1
-        ty : int
-            The amount of movment along the y axis, can be -1, 0, +1
-        step_size : float or int
-            The step size of a single movement
-
-        Returns
-        -------
-        T : list
-            A 3*3 affine translation matrix
-
-        """
         T = np.identity(3)
         T[:2, 2] = (tx*step_size, ty*step_size)
         return T
@@ -248,23 +169,6 @@ class WallTransform:
     
     @staticmethod
     def _get_flip_matrix(ax:int, ay:int):
-        """
-        The action selected by the agent is 'flip'. So, this method generates
-        a translation matrix corresponds to the selected action.
-        
-        Parameters
-        ----------
-        ax : int
-            Flipping coefficient w.r.t the y axis
-        ay : int
-            Flipping coefficient w.r.t the x axis
-
-        Returns
-        -------
-        F : list
-            A 3*3 fliping matrix
-
-        """
         F = np.identity(3)
         F[0, 0] = ax
         F[1, 1] = ay
@@ -273,21 +177,6 @@ class WallTransform:
     
     @staticmethod
     def _get_rotation_matrix(angle:float):
-        """
-        The action selected by the agent is 'rotate'. So, this method generates
-        a rotation matrix corresponds to the selected action.
-
-        Parameters
-        ----------
-        angle : float
-            THe rotation angle in radian
-
-        Returns
-        -------
-        R : list
-            A 3*3 rotation matrix
-
-        """
         c, s = np.cos(angle), np.sin(angle)
         R = np.array([ [c, -s, 0],
                        [s,  c, 0],
@@ -296,23 +185,6 @@ class WallTransform:
     
     
     def _apply_transformer(self, dynamic_coords:dict):
-        """
-        Transforms the wall according to the selected action, or better to say,
-        according to the extracted affine transformation matrix. 
-
-        Parameters
-        ----------
-        dynamic_coords : dict
-            A dict consists of the coords needed to be transfered. 
-
-        Returns
-        -------
-        transformed_dynamic_coords: dict
-            This methds returns the transformed coords. Or in the case, the 
-            transformed coords is invalid, it returns the input coords without 
-            any transformation. 
-
-        """
         originated_dynamic_coords = self._shift_to_origin(dynamic_coords, self.anchor_coord)
         originated_dynamic_coords = self._to_homogeneous(originated_dynamic_coords)
         transformed_originated_dynamic_coords = self.transformer_matrix @ originated_dynamic_coords
@@ -328,25 +200,6 @@ class WallTransform:
         
     @staticmethod
     def _shift_to_origin(coords, anchor_coord):
-        """
-        For applying the transformation, first we shift all coords to the
-        main origin. And then gets them back to the current coords. Indeed,
-        we shift the anchor_coord to (0, 0), and shift the other coords 
-        according to it. 
-
-        Parameters
-        ----------
-        coords : list or nparray
-            An array of the dynamic coords that we want to shift.
-        anchor_coord : list or nparray
-            The current origin of the segment/wall, which is not (0, 0)
-
-        Returns
-        -------
-        new_coords : nparray
-            The new coords shiftted to the main origin (0, 0)
-
-        """
         if isinstance(coords, list):
             coords = np.array(coords)
         if isinstance(anchor_coord, list):
@@ -358,23 +211,6 @@ class WallTransform:
     
     @staticmethod
     def _return_to_anchor(coords, anchor_coord):
-        """
-        After applying the transformation, we shift back the dynamic coords
-        to the initil coord.
-
-        Parameters
-        ----------
-        coords : list or nparray
-            An array of the dynamic coords that we want to shift.
-        anchor_coord : list or nparray
-            The current origin of the segment/wall, which is not (0, 0).
-
-        Returns
-        -------
-        new_coords : nparray
-            The new coords shiftted to the current coord
-
-        """
         if isinstance(coords, list):
             coords = np.array(coords)
         if isinstance(anchor_coord, list):
@@ -386,67 +222,17 @@ class WallTransform:
     
     @staticmethod 
     def _to_homogeneous(coords):
-        """
-        For transformation we use homogeneous coorinates, as it is more 
-        convinient to work with. 
-
-        Parameters
-        ----------
-        coords : list or nparray
-            An array of the coords that we want convert them to homogeneous 
-            coorinates.
-
-        Returns
-        -------
-        nparray
-            The homogeneous coorinates of the input normal coords.
-
-        """
         coords = np.hstack((coords, np.ones((coords.shape[0], 1), dtype=coords.dtype)))
         return coords.T
     
     
     @staticmethod 
     def _exit_homogeneous(coords):
-        """
-        Returns the coords from homogeneous coorinates to normal coorinates
-
-        Parameters
-        ----------
-        coords : list or nparray
-            An array of the coords that we want convert them to normal 
-            coorinates from homogeneous coorinates.
-
-        Returns
-        -------
-        nparray
-            The normal coorinates of the input homogeneous coords.
-
-        """
         coords /= coords[-1, :]
         return coords[:-1, :].T
     
     
     def _make_wall_coords(self, new_wall:list):
-        """
-        Receives the new_wall and sends it to 'make_walls' in order to get
-        wall's properties
-
-        Parameters
-        ----------
-        new_wall : list
-            A list consists of 3 coords: [back_open_coord, anchor_coord, 
-                                          front_open_coord] of the new wall
-
-        Returns
-        -------
-        dict
-            The new wall coords consists of back, front, and anchor coords, 
-            and also, the properties of the two back and front segments of the
-            new wall. 
-
-        """
-        
         """ Making sure if for some reason two wall's segments lie on 
         each other, we covert the transformed wall to the original wall """
         if np.allclose(new_wall[0], new_wall[1]) or \
@@ -465,29 +251,6 @@ class WallTransform:
         
     @staticmethod
     def _grow_segment(coord, direction, step_size):
-        """
-        Grow a segment according to its current direction, and step_size
-
-        Parameters
-        ----------
-        coord : list or nparray
-            The coords of the segment we want to grwo
-        direction : str
-            The direction of the segment
-        step_size : int
-            The step size for grwoing the segment
-
-        Raises
-        ------
-        ValueError
-            'Invalid direction'. 
-        
-        Returns
-        -------
-        list
-            a list consists of the coords of the grown segment.
-
-        """
         if direction == 'north':
             return [coord[0], coord[1]+step_size]
         elif direction == 'south':
@@ -502,29 +265,6 @@ class WallTransform:
             
     @staticmethod
     def _cut_segment(coord, direction, step_size):
-        """
-        Cut a segment according to its current direction, and step_size
-
-        Parameters
-        ----------
-        coord : list or nparray
-            DESCRIPTION.
-        direction : str
-            The direction of the segment
-        step_size : int
-            The step size for grwoing the segment
-
-        Raises
-        ------
-        ValueError
-            'Invalid direction'.
-
-        Returns
-        -------
-        list
-            a list consists of the coords of the shortened segment.
-
-        """
         if direction == 'north':
             return [coord[0], coord[1]-step_size]
         elif direction == 'south':
@@ -543,22 +283,6 @@ class WallTransform:
     
     
     def _is_valid(self, new_coords):
-        """
-        Check if the coords, particularly the new coords are valid or not.
-        If the coords are out of the plan boundries, we consider them as 
-        invalid coords. 
-
-        Parameters
-        ----------
-        new_coords : nparray
-            an array consists of new coords
-
-        Returns
-        -------
-        bool
-            returns True if the new_coords in valid, otherwise it returns False
-
-        """
         if isinstance(new_coords, list):
             new_coords = np.array(new_coords)
         if ( (np.min(new_coords[:,0]) >= self.fenv_config['min_x']) and \
@@ -569,7 +293,7 @@ class WallTransform:
         else:
             return False
         
-        
+#%% This is only for testing and debugging
 if __name__ == '__main__':
     from fenv_config import LaserWallConfig
     fenv_config = LaserWallConfig().get_config()
@@ -584,7 +308,6 @@ if __name__ == '__main__':
       'back_segment': {'orientation': 'axial',
        'direction': 'north',
        'position': 'in'}}       
-
 
     self = WallTransform('wall_1', wall_coords, action, fenv_config)
     new_wall = self.transform()

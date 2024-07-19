@@ -99,8 +99,6 @@ class Observation:
                     dtype=float,
             )
             
-            
-
         # _observation_space_gnn = gym.spaces.Box(low=self.state_data_dict['low_gnn'], 
         #                                         high=self.state_data_dict['high_gnn'], 
         #                                         shape=self.state_data_dict['shape_gnn'], 
@@ -238,7 +236,6 @@ class Observation:
             self.active_wall_status, new_walls_coords = self.action_parser.select_wall(plan_data_dict, self.decoded_action_dict)
         else:
             self.active_wall_status = 'rejected_by_missing_room'
-            # print("action_status is None")
 
         if self.active_wall_status == "check_room_area":
             self.active_wall_name = self.decoded_action_dict['active_wall_name']
@@ -258,7 +255,6 @@ class Observation:
 
             plan_data_dict = self.plan_constructor._update_block_cells(plan_data_dict)
 
-            # print(f"before: self.active_wall_status: {self.active_wall_status}")
             self.active_wall_status = self.design_inspector.inspect_constraints(plan_data_dict, self.active_wall_name)
 
 
@@ -345,10 +341,7 @@ class Observation:
             active_room_i = int(active_wall_name.split('_')[1])
             active_room_name = f"room_{active_room_i}"
         
-        
         # plan_data_dict = self.state_composer.warooge_data_extractor(plan_data_dict)
-        
-        
         # plan_data_dict = self.state_composer.refine_moving_labels(plan_data_dict)
         
         plan_data_dict = self.state_composer.create_x_observation(plan_data_dict, active_wall_name)
@@ -408,7 +401,7 @@ class Observation:
 
         
     
-#%% 
+#%% This is only for testing and debugging
 if __name__ == '__main__':
     from gym_floorplan.envs.fenv_config import LaserWallConfig
     fenv_config = LaserWallConfig().get_config()
@@ -418,8 +411,6 @@ if __name__ == '__main__':
     active_wall_name = 'wall_11'
     for ep_time_step, action in enumerate([992, 714, 874, 1456, 930, 134, 635]):
         self.update(episode, action, ep_time_step)
-        
         if self.active_wall_status == "accepted":
             active_wall_name = f"wall_{int(self.active_wall_name.split('_')[1])+1}"
-            
     plan_data_dict = self.plan_data_dict
