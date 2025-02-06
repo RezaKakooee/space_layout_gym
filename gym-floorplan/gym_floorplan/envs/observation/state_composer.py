@@ -8,7 +8,10 @@ Created on Thu Aug  4 17:43:42 2022
 
 
 #%%
+import os
+from datetime import datetime
 import copy
+import inspect
 import numpy as np
 
 import torch
@@ -45,13 +48,13 @@ class StateComposer:
         
         
     def creat_observation_space_variables(self):
-        if self.fenv_config['env_planning'] == 'One_Shot': # we need the last list as it contains 'fc'
-            if self.fenv_config['use_areas_info_into_observation_flag']:
-                lowest_obs_val_fc = -self.fenv_config['total_area']
-                highest_obs_val_fc = self.fenv_config['total_area']
-            else:
-                lowest_obs_val_fc = -1
-                highest_obs_val_fc = 30
+        # if self.fenv_config['env_planning'] == 'One_Shot': # we need the last list as it contains 'fc'
+        if self.fenv_config['use_areas_info_into_observation_flag']:
+            lowest_obs_val_fc = -self.fenv_config['total_area']
+            highest_obs_val_fc = self.fenv_config['total_area']
+        else:
+            lowest_obs_val_fc = -1
+            highest_obs_val_fc = 30
 
         
         low_fc = lowest_obs_val_fc #* np.ones(len_state_vec, dtype=float)
@@ -179,7 +182,8 @@ class StateComposer:
                                                                    'end_of_wall':   list(front_segment['reflection_coord']) })
                 except:
                     print("wait in _wall_data_extractor_for_single_agent of observation")
-                    np.save("plan_data_dict__in_state_composer.py", plan_data_dict)
+                    time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
                     message = f"""Probably number of walls does not match with the number of rooms. 
                     The current walls_coords is {plan_data_dict['walls_coords']}, 
                     the number of rooms is: len(plan_data_dict['areas_desired']), 
@@ -219,7 +223,20 @@ class StateComposer:
             'obs_moving_labels_completed_projected': obs_moving_labels_completed_projected,
             'obs_moving_labels_refined': obs_moving_labels_refined,
             })
+        
+        if self.fenv_config['env_planning'] == "Dynamic":
+            obs_mv_adj_dyp = self.prepare_obs_for_adj_dyp(plan_data_dict)
+            plan_data_dict.update({'obs_mv_adj_dyp': obs_mv_adj_dyp})
         return plan_data_dict
+    
+    
+    
+    def prepare_obs_for_adj_dyp(self, plan_data_dict):
+        # x = obs_moving_labels_completed_projected + 2 * plan_data_dict['obs_mat_w']
+        obs_mv_adj_dyp = copy.deepcopy(np.array(plan_data_dict['obs_moving_labels']))        
+        obs_mv_adj_dyp = self._add_boarder_to_moving_labels(obs_mv_adj_dyp, plan_data_dict)
+        obs_mv_adj_dyp = self._add_entrance_to_moving_labels(obs_mv_adj_dyp, plan_data_dict)
+        return obs_mv_adj_dyp
         
    
    

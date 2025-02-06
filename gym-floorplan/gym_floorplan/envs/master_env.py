@@ -8,14 +8,17 @@ Created on Wed May 11 18:01:36 2022
 
 # %%
 import os
-# os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
 # %%
+import copy
 import gymnasium as gym
 import numpy as np
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, deque
+
+# from ray.rllib.env.multi_agent_env import MultiAgentEnv
 
 import gym_floorplan
 from gym_floorplan.envs.action.action import Action
@@ -26,7 +29,7 @@ from gym_floorplan.envs.render.render import Render
 
 
 # %%
-class SpaceLayoutGym(gym.Env):#(MultiAgentEnv):
+class SpaceLayoutGym(gym.Env): # gym.Env
     def __init__(self, env_config={'fenv_name': 'SpaceLayoutGym-v0'}):
         self.fenv_config = self.env_config = env_config
         self.env_name = 'SpaceLayoutGym-v0'
@@ -39,7 +42,7 @@ class SpaceLayoutGym(gym.Env):#(MultiAgentEnv):
         self.action_space = self.act.action_space
         self.observation_space = self.obs.observation_space
 
-        self.episode = 0
+        self.episode = 10
         # observation = self.reset()
         
         # self.seed(42)
@@ -53,20 +56,21 @@ class SpaceLayoutGym(gym.Env):#(MultiAgentEnv):
     def reset(self, *, seed=None, options=None):
         self.episode += 1
         episode_counter = None if self.load_plan_randomly else self.episode
-        observation = self.obs.obs_reset(episode_counter)
+        observation = self.obs.obs_reset(np.random.randint(0, 300, 1).item())
         self.observation_space = self.obs.observation_space
         self.accepted_action_sequence = []
         self.ep_time_step = 0
         self.ep_sum_reward = 0
         self.ep_max_reward = float('-inf')
         self.ep_mean_reward = 0
-        if self.fenv_config['load_good_action_sequence_for_on_policy_pre_training'] and np.random.rand() <= self.fenv_config['load_good_action_sequence_prob']:
-            self.load_good_action_sequence_for_on_policy_pre_training = True
-        else:
-            self.load_good_action_sequence_for_on_policy_pre_training = False
         self.action_counter = 0
         self.prev_action = 0
         self.prev_reward = 0
+
+        self.n_agents = self.obs.plan_data_dict['n_walls']
+        # for Dynamic mode: agent_i starts from agent_12, as agent_11 is lvroom which is not directly desinged
+        self.agent_names_deque = deque([f"agent_{i+1+self.fenv_config['min_room_id']}" for i in range(self.n_agents)], maxlen=self.n_agents)
+        # observation = observation.astype(np.uint8)
         return observation, {}
         
     
@@ -84,49 +88,64 @@ class SpaceLayoutGym(gym.Env):#(MultiAgentEnv):
 
 
     def step(self, action):
-        if self.load_good_action_sequence_for_on_policy_pre_training:
-            action = self.obs.plan_data_dict['potential_good_action_sequence'][self.action_counter] # [321, 1338, 976, 933, 915, 848][self.action_counter]#
-        
-        observation = self.obs.update(self.episode, action, self.ep_time_step)
-        
-        if isinstance(observation, dict) and 'cnn' in self.fenv_config['model_last_name']:
-            assert observation['observation_cnn'].shape == (23, 23, 1) if self.fenv_config['cnn_scaling_factor'] == 1 else (46, 46, 1)
-            assert observation['observation_meta'].shape == (172,)
-        
-        done = truncated = self.obs.done
-        
-        if self.obs.active_wall_status == 'badly_stopped_':
-            reward = -2000
+        if self.fenv_config['env_planning'] == 'One_Shot':
+            observation = self.obs.update(self.episode, action, self.ep_time_step)
+            if isinstance(observation, dict) and 'Cnn' in self.fenv_config['model_last_name']:
+                # assert observation['observation_cnn'].shape == (23, 23, 1) if self.fenv_config['cnn_scaling_factor'] == 1 else (46, 46, 1), f"observation['observation_cnn'].shape is {observation['observation_cnn'].shape}"
+                assert observation['observation_meta'].shape == (279,)
+            done = truncated = self.obs.done
+            if self.obs.active_wall_status == 'badly_stopped_':
+                reward = -2000
+            else:
+                reward = self.rew.reward(self.obs.plan_data_dict,
+                                        self.obs.decoded_action_dict['active_wall_name'], 
+                                        self.obs.active_wall_status,
+                                        self.ep_time_step, 
+                                        done)
+            if self.fenv_config['only_save_high_quality_env_data']:
+                if self.obs.active_wall_status in ['accepted', 'well_finished']:
+                    self.accepted_action_sequence.append(action)
+                info = self._get_info(done, reward) if (done and self.fenv_config['save_env_info_on_callback']) else {}
+            else:
+                self.accepted_action_sequence.append(action)
+                info = self._get_info(done, reward) if self.fenv_config['save_env_info_on_callback'] else {}
+            if not done:
+                self.ep_time_step += 1
+
+
+        elif self.fenv_config['env_planning'] == 'Dynamic':
+            observation = self.obs.update(self.episode, action, self.ep_time_step, self.agent_names_deque)
+            if isinstance(observation, dict) and 'Cnn' in self.fenv_config['model_last_name']:
+                assert observation['observation_cnn'].shape == (23, 23, 1) if self.fenv_config['resolution'] == 'Low' else (45, 45, 1)
+                assert observation['observation_meta'].shape == (279,)
+            self.agent_names_deque = copy.deepcopy(self.obs.shifted_agent_names_deque)
+            done = truncated = self.obs.done 
+            if self.obs.active_wall_status == 'badly_stopped_':
+                raise ValueError("Invalid active_wall_status. In DYP we dont have badly_stopped_")
+            else:
+                reward = self.rew.reward(self.obs.plan_data_dict,
+                                         self.obs.decoded_action_dict['active_wall_name'], 
+                                         self.obs.active_wall_status,
+                                         self.ep_time_step, 
+                                         done)
+            if self.rew.well_finished_condition:
+                self.obs.active_wall_status = 'well_finished'
+                done = True
+                
+            info = self._get_info(done, reward) if (self.fenv_config['save_env_info_on_callback'] and self.fenv_config['env_info_flag']) else {} 
+            if not done:
+                self.ep_time_step += 1
         else:
-            reward = self.rew.reward(self.obs.plan_data_dict,
-                                     self.obs.decoded_action_dict['active_wall_name'], 
-                                     self.obs.active_wall_status,
-                                     self.ep_time_step, 
-                                     done)
+            raise ValueError(f"Invalid env_planning: {self.fenv_config['env_planning']}")
 
         self.ep_sum_reward += reward
         self.ep_max_reward = max(self.ep_max_reward, reward)
-        self.ep_mean_reward = 1/(self.ep_time_step+1) * (self.ep_time_step*self.ep_mean_reward + reward)
-        
-        
-        if self.fenv_config['only_save_high_quality_env_data']:
-            if self.obs.active_wall_status in ['accepted', 'well_finished']:
-                self.accepted_action_sequence.append(action)
-            info = self._get_info(done, reward) if (done and self.fenv_config['save_env_info_on_callback']) else {}
-        
-        else:
-            self.accepted_action_sequence.append(action)
-            info = self._get_info(done, reward) if self.fenv_config['save_env_info_on_callback'] else {}
-        
-        
-        if not done:
-            self.ep_time_step += 1
-        
+        self.ep_mean_reward = 1/(self.ep_time_step+1) * ((self.ep_time_step-1)*self.ep_mean_reward + reward)
         self.done = done
         self.info = info
-        
         self.action_counter += 1
-
+        
+        # observation = observation.astype(np.uint8)
         return observation, reward, done, truncated, info
     
     
@@ -268,14 +287,25 @@ class SpaceLayoutGym(gym.Env):#(MultiAgentEnv):
 
     def view(self, episode=0):
         self.vis.view(self.obs.plan_data_dict, self.episode, self.ep_time_step)
+        
+        
+    
+    def expose(self, episode=0):
+        self.vis.expose(self.obs.plan_data_dict, self.episode, self.ep_time_step)
             
+
+
+    def blueprint(self, episode=0):
+        self.vis.blueprint(self.obs.plan_data_dict, self.episode, self.ep_time_step)
     
 
 
 
-#%% This is only for testing and debugging
+# %%
 if __name__ == "__main__":
     from gym_floorplan.envs.fenv_config import LaserWallConfig
+    
+    
     hyper_params = {
         'agent_name': 'RND',
         'phase': 'train',
@@ -284,13 +314,18 @@ if __name__ == "__main__":
         'model_last_name': 'MetaCnnEncoder',
         'scenario_name': 'debug',
         }
+    
+
+    
     fenv_config = LaserWallConfig(phase=hyper_params['phase'], 
                                   hyper_params=hyper_params).get_config()
+    
+    
     self = SpaceLayoutGym(fenv_config)
     s0, _ = self.reset()
     a = self.action_space.sample()
     a = {"agent_1": 2}
     s, _, _, _, _= self.step(a)
     
-    from ray.rllib.utils import check_env
-    check_env(self)
+    # from ray.rllib.utils import check_env
+    # check_env(self)

@@ -103,7 +103,7 @@ class Partitioner:
         return all(x==y-1 for x, y in zip(L, L[1:]))
     
 
-#%% This is only for testing and debugging
+#%%
 if __name__ == '__main__':
     obs_mat = np.array([[0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
                         [0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
@@ -127,6 +127,8 @@ if __name__ == '__main__':
                         [0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
                         [0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
                         [1., 1., 1., 1., 1., 1., 1., 1., 1., 1.]])
+    
+    obs_mat = obs_mat == 1
     
     self = Partitioner(obs_mat)
     all_rects = self.get_rectangules()

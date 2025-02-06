@@ -69,43 +69,76 @@ class WallGenerator:
         return walls_coords
         
         
-    def _generate_random_wall_coords(self, valid_poinsts_for_sampling=None):
+    def _generate_random_wall_coords(self, valid_points_for_sampling=None):
         seg_length = self.fenv_config['seg_length']
-        if valid_poinsts_for_sampling is None:
-            anchor_points_Xs = list(seg_length * 
-                                    np.random.randint(
-                                        0+1, int(self.fenv_config['max_x']/seg_length) -1, 
-                                        self.fenv_config['n_walls']))
-            anchor_points_Ys = list(seg_length * 
-                                    np.random.randint(
-                                        0+1, int(self.fenv_config['max_y']/seg_length) -1, 
-                                        self.fenv_config['n_walls']))
-            anchor_points = [[x,y] for x, y in zip(anchor_points_Xs, anchor_points_Ys)]
-        
-        else:
-            anchor_points = valid_poinsts_for_sampling[np.random.choice(valid_poinsts_for_sampling.shape[0], 3, replace=False), :].tolist()
+        try:
+            if valid_points_for_sampling is None:
+                anchor_points_Xs = list(seg_length *
+                                        np.random.randint(
+                                            0+1, int(self.fenv_config['max_x']/seg_length) -1,
+                                            self.fenv_config['n_walls']))
+                anchor_points_Ys = list(seg_length *
+                                        np.random.randint(
+                                            0+1, int(self.fenv_config['max_y']/seg_length) -1,
+                                            self.fenv_config['n_walls']))
+                anchor_points = [[x,y] for x, y in zip(anchor_points_Xs, anchor_points_Ys)]
+            else:
+                anchor_points = valid_points_for_sampling[np.random.choice(valid_points_for_sampling.shape[0], self.fenv_config['n_walls'], replace=False), :].tolist()
+        except Exception as e:
+            print(f"Error in generating random wall coords: {e}")
+            raise ValueError(f'Error in generating random wall coords: {e}')
         
         walls_coords = {}
         for i, anchor_point in enumerate(anchor_points):
-            neighborhood_points = [[anchor_point[0]+self.fenv_config['seg_length'], 
-                                            anchor_point[1]],
-                                   [anchor_point[0]-self.fenv_config['seg_length'], 
-                                            anchor_point[1]],
-                                   [anchor_point[0], 
-                                            anchor_point[1]+self.fenv_config['seg_length']],
+            neighborhood_points = [[anchor_point[0]+self.fenv_config['seg_length'],
+                                    anchor_point[1]],
+                                   [anchor_point[0]-self.fenv_config['seg_length'],
+                                    anchor_point[1]],
                                    [anchor_point[0],
-                                            anchor_point[1]-self.fenv_config['seg_length']]]
-                                   
+                                    anchor_point[1]+self.fenv_config['seg_length']],
+                                   [anchor_point[0],
+                                    anchor_point[1]-self.fenv_config['seg_length']]]
+            
             n_neighborhood = len(neighborhood_points)
-            choices = np.random.choice(range(0,n_neighborhood), 2, replace=False)
-            w_coords = {'anchor_coord': anchor_point,
-                        'back_open_coord': neighborhood_points[choices[0]],
-                        'front_open_coord': neighborhood_points[choices[1]]}
             
-            walls_coords.update({f"wall_{i+1+self.fenv_config['mask_numbers']}": w_coords})
+            anchor_coord = list(self._image_coords2cartesian(anchor_point[0], anchor_point[1], self.fenv_config['n_rows']))
+            neighborhood_coords = [list(self._image_coords2cartesian(nei[0], nei[1], self.fenv_config['n_rows'])) for nei in neighborhood_points]
             
+            if self.fenv_config['wall_shape'] == 'only_straight':
+                choices = np.random.choice([0, 1], 1)  # Choose either horizontal or vertical
+                if choices[0] == 0:  # Horizontal
+                    choices = [0, 1]
+                else:  # Vertical
+                    choices = [2, 3]
+            elif self.fenv_config['wall_shape'] == 'only_angled':
+                choices = np.random.choice([0, 1, 2, 3], 1)[0]  # Choose one of the four angled cases
+                if choices == 0:  # ┌
+                    choices = [0, 3]
+                elif choices == 1:  # ┐
+                    choices = [1, 3]
+                elif choices == 2:  # └
+                    choices = [0, 2]
+                else:  # ┘
+                    choices = [1, 2]
+            elif self.fenv_config['wall_shape'] == 'straight_and_angled':
+                choices = np.random.choice(range(0,n_neighborhood), 2, replace=False)
+            else:
+                raise ValueError(f"Invalid wall_shape: {self.fenv_config['wall_shape']}")
+            
+            w_coords = {'anchor_coord': anchor_coord,
+                        'back_open_coord': neighborhood_coords[choices[0]],
+                        'front_open_coord': neighborhood_coords[choices[1]]}
+            
+            walls_coords.update({f"wall_{self.fenv_config['min_room_id']+i}": w_coords})
+        
         return walls_coords
             
+    
+    
+    @staticmethod
+    def _image_coords2cartesian(r, c, n_rows):
+        return c, n_rows-1-r 
+    
     
     def __fragment_identifier(self, start_coord=None, end_coord=None):
         if (start_coord is None) or (end_coord is None):

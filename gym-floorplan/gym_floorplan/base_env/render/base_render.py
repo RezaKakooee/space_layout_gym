@@ -2,7 +2,7 @@
 """
 Created on Fri Jul  2 00:24:19 2021
 
-@author: Reza Kakooee
+@author: Reza
 """
 from abc import ABC, abstractmethod
 

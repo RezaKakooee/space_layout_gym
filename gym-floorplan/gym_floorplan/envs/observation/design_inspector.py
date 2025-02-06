@@ -11,6 +11,7 @@ import copy
 import inspect
 import itertools
 import numpy as np
+from datetime import datetime
 
 from skimage import graph
 from skimage import filters
@@ -23,6 +24,107 @@ from gym_floorplan.envs.observation.layout_graph import LayoutGraph
 class DesignInspector:
     def __init__(self, fenv_config):
         self.fenv_config = fenv_config
+        
+        
+        
+    def inspect_entrace_lvroom_relation_for_dyp(self, plan_data_dict, active_wall_name=None):
+        w_status = 'sofar_ok'
+        if self.fenv_config['is_entrance_a_constraint']:
+            if active_wall_name:
+                if not self._check_entrance_status_dyp(plan_data_dict, active_wall_name):
+                    w_status = 'rejected_by_entrance'
+            else:
+                for wall_name in plan_data_dict['inwalls_coords'].keys():
+                    if not self._check_entrance_status_dyp(plan_data_dict, wall_name):
+                        w_status = 'rejected_by_entrance'
+                        break
+        
+        if ( self.fenv_config['is_entrance_adjacency_a_constraint'] or 
+              self.fenv_config['is_entrance_lvroom_connection_a_constraint'] ):
+            tmp_edge_list = self._get_tmp_edge_list(plan_data_dict)
+        
+            if ( self.fenv_config['is_entrance_adjacency_a_constraint']):# and 
+                  # self.fenv_config['is_adjacency_considered']): # TODO
+                if not self._check_entrance_adjacency_status(plan_data_dict, tmp_edge_list):
+                    w_status = 'rejected_by_entrance'
+                    
+            # this checks if lvroom is connected to the entrance
+            # this is required, as the above alone cannot check the entrance-lvroom connecion
+            if ( self.fenv_config['is_entrance_lvroom_connection_a_constraint'] and 
+                  self.fenv_config['lvroom_id'] in plan_data_dict['obs_moving_labels'] ):
+                if not self._check_lvroom_adjacency_status(plan_data_dict, tmp_edge_list): 
+                    w_status = 'rejected_by_lvroom'
+                    
+        return w_status
+    
+    
+    
+    
+    def _check_entrance_status_dyp(self, plan_data_dict, active_wall_name):
+        active_wall_anchor_coord = plan_data_dict['walls_coords'][active_wall_name]['anchor_coord']
+        active_wall_front_reflection_coord = plan_data_dict['walls_coords'][active_wall_name]['front_segment']['reflection_coord']
+        active_wall_back_reflection_coord = plan_data_dict['walls_coords'][active_wall_name]['back_segment']['reflection_coord']
+        
+        if (list(active_wall_anchor_coord) in plan_data_dict['extended_entrance_coords'] or
+            list(active_wall_front_reflection_coord) in plan_data_dict['extended_entrance_coords'] or
+            list(active_wall_back_reflection_coord) in plan_data_dict['extended_entrance_coords']):
+           return False
+        
+        active_wall_anchor_position = self._cartesian2image_coord(active_wall_anchor_coord[0], active_wall_anchor_coord[1], self.fenv_config['max_y'])
+        active_wall_front_reflection_position = self._cartesian2image_coord(active_wall_front_reflection_coord[0], active_wall_front_reflection_coord[1], self.fenv_config['max_y'])
+        active_wall_back_reflection_position = self._cartesian2image_coord(active_wall_back_reflection_coord[0], active_wall_back_reflection_coord[1], self.fenv_config['max_y'])
+        
+        if (list(active_wall_anchor_position) in plan_data_dict['extended_entrance_positions'] or
+            list(active_wall_front_reflection_position) in plan_data_dict['extended_entrance_positions'] or
+            list(active_wall_back_reflection_position) in plan_data_dict['extended_entrance_positions']):
+           return False
+       
+        
+       
+        
+        active_wall_front_start_coord = plan_data_dict['walls_coords'][active_wall_name]['front_segment']['start_coord']
+        active_wall_front_end_coord = plan_data_dict['walls_coords'][active_wall_name]['front_segment']['end_coord']
+        active_wall_back_start_coord = plan_data_dict['walls_coords'][active_wall_name]['back_segment']['start_coord']
+        active_wall_back_end_coord = plan_data_dict['walls_coords'][active_wall_name]['back_segment']['end_coord']
+       
+        if (list(active_wall_front_start_coord) in plan_data_dict['extended_entrance_coords'] or
+           list(active_wall_front_end_coord) in plan_data_dict['extended_entrance_coords'] or
+           list(active_wall_back_start_coord) in plan_data_dict['extended_entrance_coords'] or
+           list(active_wall_back_end_coord) in plan_data_dict['extended_entrance_coords']):
+          return False
+       
+        active_wall_front_start_position = self._cartesian2image_coord(active_wall_front_start_coord[0], active_wall_front_start_coord[1], self.fenv_config['max_y'])
+        active_wall_front_end_position = self._cartesian2image_coord(active_wall_front_end_coord[0], active_wall_front_end_coord[1], self.fenv_config['max_y'])
+        active_wall_back_start_position = self._cartesian2image_coord(active_wall_back_start_coord[0], active_wall_back_start_coord[1], self.fenv_config['max_y'])
+        active_wall_back_end_position = self._cartesian2image_coord(active_wall_back_end_coord[0], active_wall_back_end_coord[1], self.fenv_config['max_y'])
+       
+        if (list(active_wall_front_start_position) in plan_data_dict['extended_entrance_positions'] or
+           list(active_wall_front_end_position) in plan_data_dict['extended_entrance_positions'] or
+           list(active_wall_back_start_position) in plan_data_dict['extended_entrance_positions'] or
+           list(active_wall_back_end_position) in plan_data_dict['extended_entrance_positions']):
+          return False
+      
+       
+       
+        
+        active_wall_front_open_coord = plan_data_dict['walls_coords'][active_wall_name]['front_open_coord']
+        active_wall_back_open_coord = plan_data_dict['walls_coords'][active_wall_name]['back_open_coord']
+       
+        if (list(active_wall_front_open_coord) in plan_data_dict['extended_entrance_coords'] or
+           list(active_wall_back_open_coord) in plan_data_dict['extended_entrance_coords']):
+           return False
+       
+        active_wall_front_open_position = self._cartesian2image_coord(active_wall_front_open_coord[0], active_wall_front_open_coord[1], self.fenv_config['max_y'])
+        active_wall_back_open_position = self._cartesian2image_coord(active_wall_back_open_coord[0], active_wall_back_open_coord[1], self.fenv_config['max_y'])
+        
+        if (list(active_wall_front_open_position) in plan_data_dict['extended_entrance_positions'] or
+           list(active_wall_back_open_position) in plan_data_dict['extended_entrance_positions']):
+           return False
+        
+        return True
+    
+    
+    
         
     
     
@@ -115,7 +217,8 @@ class DesignInspector:
                     # raise ValueError('No design constraints have been considered!')
             
         else:
-            np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", self.plan_data_dict)
+            time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
             message = f"""All required walls already have been drawn!
             The current room_name is: {room_name}, 
             The areas_achieved are: {plan_data_dict['areas_achieved']}, 
@@ -238,7 +341,8 @@ class DesignInspector:
             active_wall_abs_delta_area = abs(plan_data_dict['areas_delta'][room_name])
         except :
             print("wait in _get_active_wall_status of observation")
-            np.save('plan_data_dict__in__design_inspector__check_area_status.npy', plan_data_dict)
+            time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", plan_data_dict)
             messsage = f"""
             room_name of {room_name} does noe exist.
             plan_id is: {plan_data_dict['plan_id']}
@@ -271,23 +375,16 @@ class DesignInspector:
     
     
     def _extract_edge_list(self, plan_data_dict, end_of_episode=True):
-        layout_graph = LayoutGraph(plan_data_dict, self.fenv_config)
-        edge_dict = layout_graph.extract_graph_data()
-        
+        if self.fenv_config['env_planning'] == 'One_Shot':
+            layout_graph = LayoutGraph(plan_data_dict, self.fenv_config)
+            edge_dict = layout_graph.extract_graph_data()
+        else:
+            edge_dict = self.get_edge_dyp_dict(plan_data_dict['obs_mv_adj_dyp'])
+            
         edge_color_data_dict_room, edge_color_data_dict_facade, edge_color_data_dict_entrance = self._get_edge_colors(plan_data_dict,
                                                                                                                       edge_dict['edge_list_room_achieved'], 
                                                                                                                       edge_dict['edge_list_facade_achieved_str'], 
                                                                                                                       edge_dict['edge_list_entrance_achieved_str'])
-        
-        if not end_of_episode:
-            pass
-        
-        
-        
-        
-        
-        
-        
         
         
         plan_data_dict.update({'edge_list_room_achieved': edge_dict['edge_list_room_achieved'],
@@ -420,6 +517,125 @@ class DesignInspector:
         return edge_color_data_dict
     
     
+    
+    
+    def get_edge_dyp_dict(self, fp):
+        # Define room types
+        real_rooms = set(range(11, 20))  # Including room 19
+        empty_spaces = {2, 3, 4, 5}
+        combined_rooms = real_rooms.union(empty_spaces)
+        outline_walls = {6, 7, 8, 9}
+        entrance = 10
+        
+        # Get dimensions
+        height, width = fp.shape
+        
+        # Initialize edge dictionary with sets for uniqueness
+        edge_dyp_dict = {
+            'edge_list_room_achieved': set(),
+            'edge_list_facade_achieved': set(),
+            'edge_list_entrance_achieved': set()
+        }
+        
+        # Define directions for adjacency check
+        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+        
+        def check_adjacency(i, j, di, dj):
+            ni, nj = i + di, j + dj
+            if 0 <= ni < height and 0 <= nj < width:
+                if fp[ni, nj] in combined_rooms or fp[ni, nj] == entrance:
+                    return fp[ni, nj]
+                elif fp[ni, nj] == 0:  # If it's a wall, check the next cell in the same direction
+                    nni, nnj = ni + di, nj + dj
+                    if 0 <= nni < height and 0 <= nnj < width and (fp[nni, nnj] in combined_rooms or fp[nni, nnj] == entrance):
+                        return fp[nni, nnj]
+            return None
+    
+        # Check adjacency
+        for i in range(height):
+            for j in range(width):
+                current = fp[i, j]
+                if current in combined_rooms or current == entrance:
+                    for di, dj in directions:
+                        neighbor = check_adjacency(i, j, di, dj)
+                        if neighbor and neighbor != current:  # Add this check to prevent self-loops
+                            if current in combined_rooms and neighbor in combined_rooms:
+                                edge = tuple(sorted([current, neighbor]))
+                                edge_dyp_dict['edge_list_room_achieved'].add(edge)
+                            elif current == entrance and neighbor in combined_rooms:
+                                edge_dyp_dict['edge_list_entrance_achieved'].add((entrance, neighbor))
+                            elif neighbor == entrance and current in combined_rooms:
+                                edge_dyp_dict['edge_list_entrance_achieved'].add((entrance, current))
+                        elif 0 <= i+di < height and 0 <= j+dj < width and fp[i+di, j+dj] in outline_walls:
+                            if current in combined_rooms:
+                                edge_dyp_dict['edge_list_facade_achieved'].add((fp[i+di, j+dj], current))
+                            elif current == entrance:
+                                edge_dyp_dict['edge_list_entrance_achieved'].add((entrance, fp[i+di, j+dj]))
+    
+        # Add automatic connections for empty spaces
+        automatic_connections = {
+            2: [7, 9],
+            3: [6, 9],
+            4: [7, 8],
+            5: [6, 8]
+        }
+        
+        new_facade_connections = set()
+        new_entrance_connections = set()
+        
+        for edge in edge_dyp_dict['edge_list_room_achieved']:
+            for room in edge:
+                if room in empty_spaces:
+                    other_room = edge[0] if edge[1] == room else edge[1]
+                    if other_room in real_rooms:
+                        for facade in automatic_connections[room]:
+                            new_facade_connections.add((facade, other_room))
+    
+        # Process entrance connections
+        for edge in edge_dyp_dict['edge_list_entrance_achieved']:
+            if edge[1] in empty_spaces:
+                for facade in automatic_connections[edge[1]]:
+                    new_entrance_connections.add((entrance, facade))
+    
+        edge_dyp_dict['edge_list_facade_achieved'].update(new_facade_connections)
+        edge_dyp_dict['edge_list_entrance_achieved'].update(new_entrance_connections)
+    
+        # Remove edges involving empty spaces
+        edge_dyp_dict['edge_list_room_achieved'] = {edge for edge in edge_dyp_dict['edge_list_room_achieved'] 
+                                                    if edge[0] not in empty_spaces and edge[1] not in empty_spaces}
+        edge_dyp_dict['edge_list_facade_achieved'] = {edge for edge in edge_dyp_dict['edge_list_facade_achieved'] 
+                                                      if edge[1] not in empty_spaces}
+        edge_dyp_dict['edge_list_entrance_achieved'] = {edge for edge in edge_dyp_dict['edge_list_entrance_achieved'] 
+                                                        if edge[1] not in empty_spaces}
+    
+        # Convert sets back to lists for the final output
+        edge_dyp_dict['edge_list_room_achieved'] = [list(edge) for edge in edge_dyp_dict['edge_list_room_achieved']]
+        edge_dyp_dict['edge_list_facade_achieved'] = [list(edge) for edge in edge_dyp_dict['edge_list_facade_achieved']]
+        edge_dyp_dict['edge_list_entrance_achieved'] = [list(edge) for edge in edge_dyp_dict['edge_list_entrance_achieved']]
+        
+        # Create string representation keys
+        facade_mapping = {6: 'n', 7: 's', 8: 'e', 9: 'w'}
+        
+        edge_dyp_dict['edge_list_facade_achieved_str'] = [
+            [facade_mapping[edge[0]], edge[1]] for edge in edge_dyp_dict['edge_list_facade_achieved']
+        ]
+        
+        edge_dyp_dict['edge_list_entrance_achieved_str'] = [
+            ['d', facade_mapping.get(edge[1], edge[1])] for edge in edge_dyp_dict['edge_list_entrance_achieved']
+        ]
+        
+        # Create adjacency matrix
+        matrix = np.zeros((19, 19), dtype=int)
+        for edge_list in [edge_dyp_dict['edge_list_room_achieved'], edge_dyp_dict['edge_list_facade_achieved']]:
+            for edge in edge_list:
+                matrix[edge[0]-1, edge[1]-1] = 1
+                matrix[edge[1]-1, edge[0]-1] = 1  # Symmetric
+        
+        edge_dyp_dict['state_adj_matrix'] = matrix
+        
+        return edge_dyp_dict
+            
+        
     
     @staticmethod
     def _cartesian2image_coord(x, y, max_y):

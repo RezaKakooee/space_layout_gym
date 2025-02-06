@@ -245,11 +245,13 @@ if __name__ == '__main__':
         hyper_params = yaml.load(f, Loader=yaml.FullLoader)
     hyper_params.update({
         'agent_name': 'RND',
-        'phase': 'train',
-        'n_rooms': 7,
-        'plan_config_source_name': 'imitation_mode',
-        'model_last_name': 'MetaCnnEncoder',
-        'scenario_name': 'Scn__2024_04_14_1037__FTC__7Rr__ZSLR__RND',
+        'phase': 'test',
+        'n_rooms': 4,
+        'plan_config_source_name': 'fixed_test_config', #'imitation_mode', fixed_test_config create_random_config
+        'model_last_name': 'TinyCnnEncoder',
+        'scenario_name': 'Scn__2024_11_30_1244__FTC__XRr__HRes__ZSLR__RND_9',
+        'shift_zc_reward_bottom_to_zero': 0,
+        'reward_vertical_scalar': 1,
         })
     
     fenv_config = LaserWallConfig(phase=hyper_params['phase'], 
@@ -260,10 +262,12 @@ if __name__ == '__main__':
     fenv_config.update({'random_agent_flag': True,
                         'show_graph_on_plan_flag': True if fenv_config['plan_config_source_name'] in ['create_random_config', 'load_fixed_config'] else True,
                         'graph_line_style': 'bezier', # stright
-                        'save_env_info_on_callback': False if investigation_mode else False,
+                        'save_env_info_on_callback': True,
+                        'env_info_flag': True,
                         'only_save_high_quality_env_data': True,
                         'only_draw_room_gravity_points_flag': False,
                         'save_render_flag': True,
+                        'load_from_inwalls_coords_fixed_for_debug': False,
     })
         
     if fenv_config['plan_config_source_name'] == 'offline_mode':
@@ -274,6 +278,9 @@ if __name__ == '__main__':
         fenv_config['plan_path_cc'] = plan_path_cc
         print(f"plan_path_cc: {plan_path_cc}")
         
+        assert fenv_config['env_planning'] == 'One_Shot', f"When create_random_config, env_planning must be One_Shot while it is now {fenv_config['env_planning']}"
+
+        
     random_agent_config = {
         'agent_name': hyper_params['agent_name'],
         'investigation_mode': investigation_mode,
@@ -281,11 +288,11 @@ if __name__ == '__main__':
         'trial': 1,
         'n_episodes': 1,
         
-        'fixed_action_seq_flag': True,
+        'fixed_action_seq_flag': False,
         'accepted_action_sequence': [1314, 145, 1965, 1085, 2491, 3503],
         
-        'print_verbose': 1 if investigation_mode else 0,
-        'render_verbose' : 1 if investigation_mode else 0,
+        'print_verbose': 2 if investigation_mode else 0,
+        'render_verbose' : 2 if investigation_mode else 0,
         'show_render_flag': True if investigation_mode else True,
         
         'save_env_data_dict': False if investigation_mode else False,

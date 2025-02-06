@@ -3,27 +3,29 @@
 """
 Created on Mon Nov  6 19:20:46 2023
 
-@author: Reza Kakooee
+@author: rdbt
 """
 
 import os
 import inspect
 import numpy as np
+from datetime import datetime
 
 
 
 #%%
 class RewardSensor:
-    def __init__(self, fenv_config, plan_data_dict, active_wall_name, active_wall_status, done):
+    def __init__(self, fenv_config):
         self.fenv_config = fenv_config
+        
+        
+        
+    def inspect(self, plan_data_dict, active_wall_name, active_wall_status, done):
         self.plan_data_dict = plan_data_dict
         self.active_wall_name = active_wall_name
         self.active_wall_status = active_wall_status
         self.done = done
-        
-        
-        
-    def inspect(self):
+    
         inspection_output_dict = {'geometry': {}, 'topology': {}}
         def _inpect_a_room_geometry(room_name):
             active_room_desired_area = self.plan_data_dict['areas_desired'][room_name]
@@ -46,13 +48,14 @@ class RewardSensor:
             })
 
         if not self.done:
-                if 'reject' not in self.active_wall_status:
-                    active_room_name = f"room_{self.active_wall_name.split('_')[1]}"
-                    try:
-                        _inpect_a_room_geometry(active_room_name)
-                    except:
-                        np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", self.plan_data_dict)
-                        raise ValueError(f"active_room_name of {active_room_name} dose not exist!")
+            if 'reject' not in self.active_wall_status:
+                active_room_name = f"room_{self.active_wall_name.split('_')[1]}"
+                try:
+                    _inpect_a_room_geometry(active_room_name)
+                except:
+                    time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    # np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
+                    raise ValueError(f"active_room_name of {active_room_name} dose not exist!")
         else:
             for room_name in self.plan_data_dict['areas_achieved'].keys():
                 room_i = int(room_name.split('_')[1])
@@ -163,7 +166,8 @@ class RewardSensor:
                     if self.plan_data_dict['active_wall_status'] == 'well_finished' and self.fenv_config['plan_config_source_name'] != 'create_random_config':
                         assert n_nicely_achieved_connections == n_desired_connections - n_missed_connections, "Sth is wrong in calculating the adj performance"
                 except Exception as e:
-                    np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", self.plan_data_dict)
+                    time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    # np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
                     raise ValueError(f"""Sth is wrong in calculating the adj performance for badly_finished situation
                                       n_nicely_achieved_connections: {n_nicely_achieved_connections}, 
                                       n_desired_connections: {n_desired_connections}, 

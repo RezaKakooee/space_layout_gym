@@ -14,17 +14,17 @@ import gym_floorplan.envs.reward.reward_utils as reward_utils
 
 #%%
 class RewardBaseSmooth:
-    def __init__(self, fenv_config, plan_data_dict, active_wall_name, active_wall_status, done, inspection_output_dict):
+    def __init__(self, fenv_config):
         self.fenv_config = fenv_config
+        
+        
+    
+    def get_reward(self, plan_data_dict, active_wall_name, active_wall_status, done, inspection_output_dict):
         self.plan_data_dict = plan_data_dict
         self.active_wall_name = active_wall_name
         self.active_wall_status = active_wall_status
         self.done = done
         self.inspection_output_dict = inspection_output_dict
-        
-        
-    
-    def get_reward(self):
         reward = self._get_smooth_reward()
         return reward
         

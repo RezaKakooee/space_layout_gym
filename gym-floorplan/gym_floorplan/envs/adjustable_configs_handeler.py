@@ -29,7 +29,8 @@ class AdjustableConfigsHandeler:
         
         self.plans_df = None
         
-        self.adjustable_configs = self.get_configs()
+        # self.adjustable_configs = self.get_configs()
+        print("In adjustable_configs_handeler I commented line 32: self.adjustable_configs = self.get_configs()")
         
         self.temp_df = pd.DataFrame()
         
@@ -103,6 +104,15 @@ class AdjustableConfigsHandeler:
                 mask_widths = np.array(np.random.randint(blackbox_min_width, blackbox_max_width, size=mask_numbers)*2, dtype=int).tolist()
                 
                 # mask_data = {Co: [Le, Wi] for Co, Le, Wi in zip(masked_corners, mask_lengths, mask_widths)}
+                
+                
+            def sort_mask_lists(main_list, *related_lists):
+                combined = list(zip(main_list, *related_lists))
+                combined_sorted = sorted(combined)
+                result = list(zip(*combined_sorted))
+                return [list(x) for x in result]     
+            
+            masked_corners, mask_lengths, mask_widths = sort_mask_lists(masked_corners, mask_lengths, mask_widths)
             
             mask_data = {Co: [Le, Wi] for Co, Le, Wi in zip(masked_corners, mask_lengths, mask_widths)}
             areas_masked_list = [(L+1)*(W+1) for L, W in zip(mask_lengths, mask_widths)]
@@ -128,6 +138,20 @@ class AdjustableConfigsHandeler:
         else:
             lvroom_id = None
         
+        corner_to_mask_room_id = {'corner_00':2, 'corner_01':3, 'corner_10':4, 'corner_11':5}
+        areas_masked = {f"room_{corner_to_mask_room_id[corner]}":area for corner, area in zip(masked_corners, areas_masked_list)}
+        
+        # masked_region_names = []
+        # for corner in masked_corners:
+        #     if corner == 'corner_00':
+        #         masked_region_names.append('room_2')
+        #     elif corner == 'corner_01':
+        #         masked_region_names.append('room_3')
+        #     elif corner == 'corner_10':
+        #         masked_region_names.append('room_4')
+        #     elif corner == 'corner_11':
+        #         masked_region_names.append('room_5')
+        
         adjustable_configs = {
             'plan_config_source_name': 'create_random_config',
             'n_walls': n_walls,
@@ -140,7 +164,8 @@ class AdjustableConfigsHandeler:
             'mask_lengths': mask_lengths,
             'mask_widths': mask_widths,
             'area_masked': area_masked,
-            'areas_masked': {f"room_{i+1}":a for i, a in enumerate(areas_masked_list)},
+            # 'areas_masked': {n:a for n, a in zip(masked_region_names, areas_masked_list)},
+            'areas_masked': areas_masked,
             'areas_desired': areas_desired,
             'room_i_per_size_category': room_i_per_size_category,
             'room_area_per_size_category': room_area_per_size_category,
@@ -276,15 +301,42 @@ class AdjustableConfigsHandeler:
         adjustable_configs['number_of_total_walls'] = adjustable_configs['n_walls'] + n_corners # adjustable_configs['mask_numbers']
         adjustable_configs['number_of_total_rooms'] = adjustable_configs['n_rooms'] + n_corners # adjustable_configs['mask_numbers']
         
-        areas_masked = this_plan_df['areas_masked'].values.tolist()[0]
-        adjustable_configs['areas_masked'] = areas_masked
         
+        
+        ##### July 20, 2024, I recently added the following box which requires caution
+        areas_masked = this_plan_df['areas_masked'].values.tolist()[0]
+        areas_masked_dict = ast.literal_eval(areas_masked) if isinstance(areas_masked, str) else areas_masked
+        areas_masked_list = list(areas_masked_dict.values())
+        areas_masked_new_dict = {}
+        for c, a in zip(adjustable_configs['masked_corners'], areas_masked_list):
+            if c == 'corner_00':
+                room_name = 'room_2'
+            elif c == 'corner_01':
+                room_name = 'room_3'
+            elif c == 'corner_10':
+                room_name = 'room_4'
+            elif c == 'corner_11':
+                room_name = 'room_5'
+            areas_masked_new_dict.update({room_name: a})
+        # print(f"areas_masked: {areas_masked_new_dict}, masked_corners: {adjustable_configs['masked_corners']}")   
+        adjustable_configs['areas_masked'] = areas_masked_new_dict
+            
+        
+            
+        adjustable_configs['areas_masked']
         adjustable_configs['entrance_is_on_facade'] = this_plan_df['entrance_is_on_facade'].values.tolist()[0]
         
         adjustable_configs['facades_blocked'] = this_plan_df['facades_blocked'].values.tolist()[0]
         
         areas_desired = this_plan_df['areas_desired'].values.tolist()[0]
         adjustable_configs['areas_desired'] = areas_desired
+        
+        
+        if (self.fenv_config['plan_config_source_name'] in ['load_fixed_config', 'load_random_config'] and 
+            self.fenv_config['env_planning'] == 'Dynamic' and
+            'aspect_ratio_desired' not in this_plan_df.columns):
+            adjustable_configs['aspect_ratio_desired'] = {room_name: 1 for room_name in areas_desired.keys()}
+            
         
         edge_list_room_desired = this_plan_df['edge_list_room_desired'].values.tolist()[0]
         edge_list_facade_desired_str = this_plan_df['edge_list_facade_desired_str'].values.tolist()[0]
@@ -327,16 +379,21 @@ class AdjustableConfigsHandeler:
                 areas_config_ = [list(np.random.randint(min_area, max_area, 1)/1.0)[0] for _ in range(n_rooms_to_create)]
                 sum_areas_except_last_room = np.sum(areas_config_)
                 last_room_area = free_area - sum_areas_except_last_room
-                if (last_room_area >= self.fenv_config['area_inf']) and (last_room_area >= min_area) and (last_room_area <= max_area):
+                areas_config_.append(last_room_area)
+                if self.fenv_config['randomly_create_lvroom_first']:
+                    areas_config_.append(lvroom_area)
+                    
+                if ( (last_room_area >= self.fenv_config['area_inf']) and 
+                     (last_room_area >= min_area) and 
+                     (last_room_area <= max_area) and
+                     (max(areas_config_) == lvroom_area) ):
                     break
-            areas_config_.append(last_room_area)
-            if self.fenv_config['randomly_create_lvroom_first']:
-                areas_config_.append(lvroom_area)
             areas_config_ = np.sort(areas_config_)[::-1]
             areas_config = {f"room_{i+self.fenv_config['min_room_id']}": a for i, a in enumerate(areas_config_)}
+            if self.fenv_config['randomly_create_lvroom_first']: assert max(areas_config_) == lvroom_area, "lvroom should be the largest room"
             assert len(areas_config) == n_rooms, "area_configs does not include proper number of rooms"
             assert (sum(areas_config_) == free_area+lvroom_area) if self.fenv_config['randomly_create_lvroom_first'] else (sum(areas_config_) == free_area), "sum of the all areas must be equal to the free area"
-            if self.fenv_config['randomly_create_lvroom_first']: assert max(areas_config_) == lvroom_area, "lvroom should be the largest room"
+            
         else:
             raise ValueError(f"We dont need to call _configure_areas for this mode. The current mode is {self.fenv_config['plan_config_source_name']} while the accepted ones are [create_fixed_config, create_random_config]")
             
@@ -639,7 +696,7 @@ class AdjustableConfigsHandeler:
         
 
 
-#%% This is only for testing and debugging
+#%%
 if __name__ == '__main__':
     from gym_floorplan.envs.fenv_config import LaserWallConfig
     fenv_config = LaserWallConfig().get_config()

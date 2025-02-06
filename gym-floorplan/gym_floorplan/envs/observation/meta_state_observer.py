@@ -12,6 +12,7 @@ import os
 import copy
 import inspect
 import numpy as np
+from datetime import datetime
 
 
 
@@ -108,7 +109,8 @@ class MetaStateObserver:
                     proportion_achieved_list[room_i - self.fenv_config['min_room_id']] = room_data['delta_aspect_ratio'] + self.fenv_config['desired_aspect_ratio']
         proportions_state_vec = proportion_desired_list + proportion_achieved_list
         if None in proportions_state_vec:
-            np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_1.npy", self.plan_data_dict)
+            time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
             raise ValueError(f"""proportions_state_vec has None for delta_aspect_ratio.
                                proportions_state_vec is: {proportions_state_vec}, 
                                delta_aspect_ratio: {proportions_state_vec['delta_aspect_ratio']}""")
@@ -213,6 +215,7 @@ class MetaStateObserver:
                 adj_matrix[edge[1] - self.fenv_config['min_room_id'], edge[0] - self.fenv_config['min_facade_id']] = 1
             except:
                 print("")
+                raise("This is a nre erro")
         return adj_matrix
 
 

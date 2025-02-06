@@ -6,7 +6,10 @@ Created on Thu Feb 23 13:58:10 2023
 @author: Reza Kakooee
 """
 
-# import torch
+# import sys
+# sys.path.insert(0, '/home/rdbt/ETHZ/dbt_python/housing_design')
+
+import torch
 # from vqvae.vqvae_model import Model
 # from vqvae.vqvae_config import VqVaeConfig
 
@@ -151,6 +154,15 @@ class CnnStateObserver:
 
 
     def _get_canvas_cnn(self, plan_data_dict):
+        # obs_canvas_mat = copy.deepcopy(plan_data_dict['obs_moving_labels'])
+        # obw = copy.deepcopy(plan_data_dict['obs_mat_w'])
+        # obs_canvas_mat[obw == -self.fenv_config['north_facade_id']] = 0
+        # obs_canvas_mat[obw == -self.fenv_config['south_facade_id']] = 0
+        # obs_canvas_mat[obw == -self.fenv_config['east_facade_id']] = 0
+        # obs_canvas_mat[obw == -self.fenv_config['west_facade_id']] = 0
+        # for r, c in plan_data_dict['extended_entrance_positions']:
+        #     obs_canvas_mat[r][c] = self.fenv_config['entrance_cell_id']
+        
         obs_canvas_mat = copy.deepcopy(plan_data_dict['obs_moving_labels_completed_projected']) 
             
         obs_canvas_mat_kroned = np.kron(obs_canvas_mat, 
@@ -172,6 +184,9 @@ class CnnStateObserver:
         obw[obw == -self.fenv_config['west_facade_id']] = 0
         
         obs_rooms_cmap = plan_data_dict['obs_moving_labels'] - obw
+
+        # obs_rooms_cmap = copy.deepcopy(plan_data_dict['only_boarder'])
+        # obs_rooms_cmap[1:-1, 1:-1] = rw[1:-1, 1:-1]
         
         for r, c in plan_data_dict['extended_entrance_positions'][2:]:
             obs_rooms_cmap[r][c] = self.fenv_config['entrance_cell_id']
@@ -197,4 +212,5 @@ class CnnStateObserver:
         
         obs_blocked_cells_1ch = np.expand_dims(obs_blocked_cells, axis=2) #obs_blocked_cells_1ch = np.expand_dims(obs_blocked_cells, axis=0) #  TODO
         # obs_blocked_cells_1ch = obs_blocked_cells_1ch.astype(np.uint8)
+        
         return obs_blocked_cells_kroned, obs_blocked_cells_1ch    

@@ -3,21 +3,22 @@
 """
 Created on Mon Nov  6 17:17:20 2023
 
-@author: Reza Kakooee
+@author: rdbt
 """
 
 
 #%%
 class RewardBaseSimple:
-    def __init__(self, fenv_config, active_wall_status, done, inspection_output_dict):
+    def __init__(self, fenv_config):
         self.fenv_config = fenv_config
-        self.active_wall_status = active_wall_status
-        self.done = done
-        self.inspection_output_dict = inspection_output_dict
     
 
 
-    def get_reward(self):
+    def get_reward(self, active_wall_status, done, inspection_output_dict):
+        self.active_wall_status = active_wall_status
+        self.done = done
+        self.inspection_output_dict = inspection_output_dict
+        
         if self.fenv_config['rewarding_method_name'] == 'Constrain_Satisfaction':
             reward = self._get_constraint_satisfaction_reward()
         

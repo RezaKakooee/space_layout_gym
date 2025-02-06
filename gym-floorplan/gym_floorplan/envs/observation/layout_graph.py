@@ -13,6 +13,7 @@ import inspect
 import itertools
 import numpy as np
 from collections import defaultdict
+from datetime import datetime
 import networkx as nx
 from skimage import graph
 from skimage import data, segmentation, filters, color
@@ -221,7 +222,8 @@ class LayoutGraph:
                 state_adj_matrix[edge[0]-1, edge[1]-1] = 1
                 state_adj_matrix[edge[1]-1, edge[0]-1] = 1
         except:
-            np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", self.plan_data_dict)
+            time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
             message = f"""
             Some index might be wrong. The current edge_list is {edge_list},
             plan_id is: {self.plan_data_dict['plan_id']}
@@ -252,7 +254,7 @@ class LayoutGraph:
             
 
     
-#%% This is only for testing and debugging
+#%%
 if __name__ == "__main__":
      m = np.array(
        [[19, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 19],

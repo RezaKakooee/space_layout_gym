@@ -11,6 +11,7 @@ import inspect
 import numpy as np
 import pandas as pd
 from collections import defaultdict
+from datetime import datetime
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -134,7 +135,8 @@ class Metrics:
                 if plan_data_dict['active_wall_status'] == 'well_finished' and self.fenv_config['plan_config_source_name'] != 'create_random_config':
                     assert n_nicely_achieved_connections == n_desired_connections - n_missed_connections, "Sth is wrong in calculating the adj performance"
             except Exception as e:
-                np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", plan_data_dict)
+                time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", plan_data_dict)
                 raise ValueError(f"""Sth is wrong in calculating the adj performance for badly_finished situation
                                  n_nicely_achieved_connections: {n_nicely_achieved_connections}, 
                                  n_desired_connections: {n_desired_connections}, 
@@ -185,23 +187,21 @@ class Metrics:
         sns.set(style="whitegrid")
 
         # Create a figure and a set of subplots
-        fig, ax = plt.subplots(3, 1, figsize=(10, 15))
-
-        rotation = 0
+        fig, ax = plt.subplots(1, 3, figsize=(15, 5))
 
         # Boxplot for room area related metrics
         sns.boxplot(data=self.metrics_df[['room_delta_area_max', 'room_delta_area_mean', 'room_delta_area_min', 'room_delta_area_std']], ax=ax[0])
-        # ax[0].set_title('Room Area Metrics')
+        ax[0].set_title('Room Area Metrics')
 
         # Set xtick labels
-        ax[0].set_xticklabels(['Max Delta Area', 'Mean Delta Area', 'Min Delta Area', 'Std Delta Area'], rotation=rotation)
+        ax[0].set_xticklabels(['Max Delta Area', 'Mean Delta Area', 'Min Delta Area', 'Std Delta Area'], rotation=45)
 
         # Boxplot for room aspect ratio related metrics
         sns.boxplot(data=self.metrics_df[['room_delta_aspect_ratio_max', 'room_delta_aspect_ratio_mean', 'room_delta_aspect_ratio_min', 'room_delta_aspect_ratio_std']], ax=ax[1])
-        # ax[1].set_title('Room Aspect Ratio Metrics')
+        ax[1].set_title('Room Aspect Ratio Metrics')
 
         # Set xtick labels
-        ax[1].set_xticklabels(['Max Delta Aspect Ratio', 'Mean Delta Aspect Ratio', 'Min Delta Aspect Ratio', 'Std Delta Aspect Ratio'], rotation=rotation)
+        ax[1].set_xticklabels(['Max Delta Aspect Ratio', 'Mean Delta Aspect Ratio', 'Min Delta Aspect Ratio', 'Std Delta Aspect Ratio'], rotation=45)
 
         # Violin plot for adj_performance
         arr = self.metrics_df['adj_performance'].values
@@ -222,22 +222,94 @@ class Metrics:
         # Add the legend to the plot
         ax[2].legend()
         
-        # ax[2].set_title("Agent Performance on Adjacency")
-        ax[2].set_xlabel("Adjacency Accuracy")
+        ax[2].set_title("Agent Performance on Adjacency")
+        ax[2].set_xlabel("Adj Performance")
         ax[2].set_yticks([])  # Hide y ticks as they are not meaningful in this context
 
         plt.tight_layout()  # Adjust the layout
-        fig_path = os.path.join(result_dir, 'metrics.png')
-        plt.savefig(fig_path, dpi=300) 
+        fig_path = os.path.join(result_dir, 'metrics_grp.png')
+        plt.savefig(fig_path, dpi=300)
         plt.show()  # Display the plots
         
+    def visualize_metrics_for_comparison(self, result_dir, metrics_df_grp, metrics_df_sep):
+        # Calculate 'adj_performance' for both dataframes
+        metrics_df_grp['adj_performance'] = metrics_df_grp['n_nicely_achieved_connections'] / metrics_df_grp['n_desired_connections']
+        metrics_df_sep['adj_performance'] = metrics_df_sep['n_nicely_achieved_connections'] / metrics_df_sep['n_desired_connections']
+
+        sns.set(style="whitegrid")
+
+        # Create a figure and a single subplot
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        # Data for the plots
+        arr_grp = metrics_df_grp['adj_performance'].values
+        arr_sep = metrics_df_sep['adj_performance'].values
+
+        # Horizontal violin plots on the same position
+        violin_parts_grp = ax.violinplot(arr_grp, vert=False, positions=[1], showmedians=True, widths=0.6)
+        violin_parts_sep = ax.violinplot(arr_sep, vert=False, positions=[1], showmedians=True, widths=0.6)
+
+        # Customizing the color of the violin parts for clarity
+        for pc in violin_parts_grp['bodies']:
+            pc.set_facecolor('blue')
+            pc.set_alpha(1)  # Setting alpha for transparency
+        for pc in violin_parts_sep['bodies']:
+            pc.set_facecolor('red')
+            pc.set_alpha(0.4)  # Matching alpha for overlapping effect
+
+        # Adding scatter points
+        jitter_grp = np.random.normal(1, 0.02, size=len(arr_grp))  # Reduced jitter for overlap
+        jitter_sep = np.random.normal(1, 0.02, size=len(arr_sep))
+        cmap = plt.cm.get_cmap('viridis', 6)  # colormap with 6 intervals
+        scatter_colors = cmap(metrics_df_sep['n_rooms'] - 4)
+        ax.scatter(arr_grp, jitter_grp, color='black', s=20, alpha=0.7)
+        ax.scatter(arr_sep, jitter_sep, color=scatter_colors, s=20, alpha=0.7)
+
+        # Calculating mean and std for group
+        mean_grp = np.mean(arr_grp)
+        std_grp = np.std(arr_grp)
+        mean_sep = np.mean(arr_sep)
+        std_sep = np.std(arr_sep)
+
+        # Plotting mean and std lines
+        ax.axvline(mean_grp, color='blue', linestyle='dashed', linewidth=2, label='Mean Grp', alpha=0.7)
+        ax.axvline(mean_grp + std_grp, color='blue', linestyle='dotted', linewidth=2, label='+1 Std. Grp')
+        ax.axvline(mean_grp - std_grp, color='blue', linestyle='dotted', linewidth=2, label='-1 Std. Grp')
+        ax.axvline(mean_sep, color='red', linestyle='dashed', linewidth=2, label='Mean Sep', alpha=0.7)
+        ax.axvline(mean_sep + std_sep, color='red', linestyle='dotted', linewidth=2, label='+1 Std. Sep')
+        ax.axvline(mean_sep - std_sep, color='red', linestyle='dotted', linewidth=2, label='-1 Std. Sep')
+
+        # Customize plot
+        ax.set_title("Agent Performance on Adjacency")
+        ax.set_xlabel("Adj Performance")
+        ax.set_yticks([1], ['Combined'])  # Only one label for combined plots
+        ax.legend()
+
+        plt.tight_layout()
+        fig_path = os.path.join(result_dir, 'adj_performance_comparison5.png')
+        plt.savefig(fig_path, dpi=300)
+    plt.show()
         
-#%% This is only for testing and debugging
+#%%
 if __name__ == '__main__':
-    path = "~/housing_design/storage_nobackup/sb_agents_storage/Prj__2024_04_20_1010__sb__bc2ppo/Scn__2024_04_20_082331__PTM____ZSLR__BC/result/metrics.csv"
-    result_dir = os.path.dirname(path)
+    path_grp = "/scicore/home/graber0001/kakooe0000/housing_design/storage_nobackup/sb_agents_storage/Prj__2024_04_20_1010__sb__bc2ppo/for_comparison/metrics_grp.csv"
+    path_sep = "/scicore/home/graber0001/kakooe0000/housing_design/storage_nobackup/sb_agents_storage/Prj__2024_04_20_1010__sb__bc2ppo/for_comparison/metrics_sep.csv"
+    result_dir = "/scicore/home/graber0001/kakooe0000/housing_design/storage_nobackup/sb_agents_storage/Prj__2024_04_20_1010__sb__bc2ppo/for_comparison"
+    
     self = Metrics({})
-    self.metrics_df = pd.read_csv(path)
-    self.visualize_metrics(result_dir)
+    self.metrics_df_grp = pd.read_csv(path_grp)
+    self.metrics_df_sep = pd.read_csv(path_sep)
+    
+    self.visualize_metrics_for_comparison(result_dir, self.metrics_df_grp, self.metrics_df_sep)
+
+
+# # # #%%
+# if __name__ == '__main__':
+#     path = "/scicore/home/graber0001/kakooe0000/housing_design/storage_nobackup/sb_agents_storage/Prj__2024_04_20_1010__sb__bc2ppo/for_comparison/metrics_grp.csv"
+#     result_dir = "/scicore/home/graber0001/kakooe0000/housing_design/storage_nobackup/sb_agents_storage/Prj__2024_04_20_1010__sb__bc2ppo/for_comparison"
+#     self = Metrics({})
+#     self.metrics_df = pd.read_csv(path)
+#     self.visualize_metrics(result_dir)
+
 
     

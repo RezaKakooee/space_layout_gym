@@ -12,6 +12,7 @@ import math
 import copy
 import inspect
 import numpy as np
+from datetime import datetime
 from scipy import ndimage as ndi
 
 from scipy import ndimage
@@ -80,8 +81,8 @@ class RoomExtractor:
     
     
     def _update_plan_data_dict_based_on_room_areas(self, plan_data_dict, labels, wall_i, room_i, room_name):
-        obs_moving_labels = plan_data_dict['obs_moving_labels']
-        obs_mat_for_dot_prod = plan_data_dict['obs_mat_for_dot_prod']
+        obs_moving_labels = copy.deepcopy(plan_data_dict['obs_moving_labels'])
+        obs_mat_for_dot_prod = copy.deepcopy(plan_data_dict['obs_mat_for_dot_prod'])
         labels_ = copy.deepcopy(labels)
         cover0 = np.argwhere(obs_moving_labels != 0)
         if len(cover0) >= 1:
@@ -100,11 +101,13 @@ class RoomExtractor:
         try:
             min_room_unique_possible_id = room_unique_possible_ids[np.argmin(possible_areas)]
         except:
-            np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_1.npy", plan_data_dict)
+            time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", plan_data_dict)
             message = f"""
             in room_extractor possible_areas is empty: {possible_areas},
             plan_id is: {plan_data_dict['plan_id']}
             """
+            # min_room_unique_possible_id = [0] # TODO: must be removed
             raise ValueError(message)
             
         obs_moving_labels[labels==min_room_unique_possible_id] = room_i
@@ -120,7 +123,8 @@ class RoomExtractor:
                 try:
                     plan_data_dict['areas_delta'].update({room_name: this_room_area - plan_data_dict['areas_desired'][room_name]})
                 except:
-                    np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_2.npy", plan_data_dict)
+                    time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", plan_data_dict)
                     message = f"""
                     sth is wrong here.
                     room_i: {room_i}, 
@@ -147,14 +151,24 @@ class RoomExtractor:
             try:
                 plan_data_dict['rooms_dict'].update({last_room_name: {}})
             except:
-                np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_3.npy", plan_data_dict)
+                time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", plan_data_dict)
                 raise ValueError(f"local variable last_room_name of {last_room_name} referenced before assignment")
             
             max_area = np.max(possible_areas)
-            if possible_areas[0] == possible_areas[1]:
-                max_indx = 1
-            else:
+            
+            try:
+                if possible_areas[0] == possible_areas[1]:
+                    max_indx = 1
+                else:
+                    max_indx = np.argmax(possible_areas)
+            except Exception as e:
                 max_indx = np.argmax(possible_areas)
+                print(f"possible_areas: {possible_areas}, e: {e}")
+                time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", plan_data_dict)
+                raise ValueError(f"possible_areas: {possible_areas}, e: {e}")
+                
             max_room_unique_possible_id = room_unique_possible_ids[max_indx]
             
             obs_moving_labels[labels==max_room_unique_possible_id] = last_room_i
@@ -163,7 +177,8 @@ class RoomExtractor:
             try:
                 plan_data_dict['areas_delta'].update({last_room_name: max_area - plan_data_dict['areas_desired'][last_room_name]})
             except:
-                np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_4.npy", plan_data_dict)
+                time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", plan_data_dict)
                 raise ValueError(f"Probably room index does not index! last_room_i is: {last_room_i})")
             plan_data_dict['rooms_dict'].update({last_room_name: {}})
             plan_data_dict['rooms_dict'][last_room_name].update({"room_area": max_area})
@@ -190,7 +205,7 @@ class RoomExtractor:
     def _update_plan_data_dict_based_on_room_shape_properties(self, plan_data_dict, room_i, room_name):
         room_positions = plan_data_dict['rooms_dict'][room_name]['room_positions']
         
-        if len(plan_data_dict['areas_achieved']) < plan_data_dict['number_of_total_rooms']:  # TODO
+        if len(plan_data_dict['areas_achieved']) < plan_data_dict['number_of_total_rooms']-1:  # TODO
             wall_positions = plan_data_dict['walls_coords'][f"wall_{room_i}"]['wall_positions']
         
         only_this_room_labels_mat = np.zeros((self.fenv_config['n_rows'], self.fenv_config['n_cols']))
@@ -200,7 +215,7 @@ class RoomExtractor:
             only_this_room_labels_mat[r,c] = room_i
             obs_moving_ones[r,c] = 1
         
-        if len(plan_data_dict['areas_achieved']) < plan_data_dict['number_of_total_rooms']: # TODO
+        if len(plan_data_dict['areas_achieved']) < plan_data_dict['number_of_total_rooms']-1: # TODO
             for r, c in wall_positions:
                 obs_moving_ones[r,c] = 1
             

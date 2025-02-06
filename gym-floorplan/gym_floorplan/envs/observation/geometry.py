@@ -33,7 +33,10 @@ class Segment:
         if (self.direction == 'east') or (self.direction == 'west') or (self.direction == 'horizental'):
             m = 0
         elif (self.direction == 'north') or (self.direction == 'south') or (self.direction == 'vertical'):
-            m = np.inf
+            try:
+                m = np.infty
+            except:
+                m = np.inf
         else:
             m = (self.end_coord[1]-self.start_coord[1]) / \
                (self.end_coord[0]-self.start_coord[0] + np.finfo(float).eps)
@@ -52,7 +55,10 @@ class Segment:
             m = 0
             line_eq = [1, 0, -y0] # [1, -m, -(y0 -m*x0)] -> y=-[2], where [2] referes to index 2
         elif (self.direction == 'north') or (self.direction == 'south') or (self.direction == 'vertical'):
-            m = np.inf
+            try:
+                m = np.infty
+            except:
+                m = np.inf
             line_eq = [0, 1, -x0] # -[(1/m) -1 -((1/m)*y0-x0)] => x=-[2]
         else:
             line_eq = [1, -m, -(y0 - m*x0)] # y-ax-b=0 -> a=-[1] b=-[2]

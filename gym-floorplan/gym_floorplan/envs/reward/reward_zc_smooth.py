@@ -9,6 +9,7 @@ Created on Mon Nov  6 17:28:45 2023
 import os
 import inspect
 import numpy as np
+from datetime import datetime
 
 import gym_floorplan.envs.reward.reward_utils as reward_utils
 
@@ -17,20 +18,18 @@ import gym_floorplan.envs.reward.reward_utils as reward_utils
 
 #%%
 class RewardZcSmooth:
-    def __init__(self, fenv_config, plan_data_dict, active_wall_name, active_wall_status, done, inspection_output_dict):
+    def __init__(self, fenv_config):
         self.fenv_config = fenv_config
+        
+        
+        
+    def get_reward(self, plan_data_dict, active_wall_name, active_wall_status, done, inspection_output_dict):
         self.plan_data_dict = plan_data_dict
-        # if active_wall_status == 'well_finished':
-        #     path = '/home/rdbt/ETHZ/dbt_python/housing_design/rlb_agents/plan_data_dict__reward_zc_smooth.py_RewardZcSmooth__get_fnorm_reward_value.npy'
-        #     self.plan_data_dict = np.load(path, allow_pickle=True).tolist()
         self.active_wall_name = active_wall_name
         self.active_wall_status = active_wall_status
         self.done = done
         self.inspection_output_dict = inspection_output_dict
-        
-        
-        
-    def get_reward(self):
+    
         if 'DLin' in self.fenv_config['rewarding_method_name']:
             reward = self._get_direct_linear_reward_fn()
         elif 'Perc' in self.fenv_config['rewarding_method_name']:
@@ -111,7 +110,8 @@ class RewardZcSmooth:
                 reward = self._get_fnorm_reward_value(delta_geom_topo_norm, terminal_state=True)
                 
             else:
-                np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", self.plan_data_dict)
+                time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
                 raise ValueError(f"Invalid active_wall_status. active_wall_status: {self.active_wall_status}, plan_id: {self.plan_data_dict['plan_id']}")
                 
         return reward
@@ -178,8 +178,9 @@ class RewardZcSmooth:
         reward_fn = self._get_reward_fn()
         reward = reward_fn(x, x_start, x_end, y_start, y_end, k)
         if (reward < y_start) or (reward > y_end):
-            np.save(f"reward__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", reward)
-            np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", self.plan_data_dict)
+            # np.save(f"reward__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", reward)
+            time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
             message = f"""
             Reward is out of range. 
             reward: {reward}, 
@@ -268,7 +269,8 @@ class RewardZcSmooth:
                     reward = ( wa_sum * reward_area + wp_sum * reward_aspect_ratio + we * reward_edge ) / (wa_sum + wp_sum + we)
                 
             else:
-                np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", self.plan_data_dict)
+                time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
                 raise ValueError(f"Invalid active_wall_status. active_wall_status: {self.active_wall_status}, plan_id: {self.plan_data_dict['plan_id']}")
                 
         return reward
@@ -438,7 +440,8 @@ class RewardZcSmooth:
                     reward += self.fenv_config['reward_vertical_scalar']
                 
             else:
-                np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}.npy", self.plan_data_dict)
+                time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
                 raise ValueError(f"Invalid active_wall_status. active_wall_status: {self.active_wall_status}, plan_id: {self.plan_data_dict['plan_id']}")
                 
         return reward
@@ -468,8 +471,9 @@ class RewardZcSmooth:
         reward_fn = self._get_reward_fn()
         reward = reward_fn(x, x_start, x_end, y_start, y_end)
         if (reward < y_start) or (reward > y_end):
-            np.save(f"reward__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_1.npy", reward)
-            np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_1.npy", self.plan_data_dict)
+            # np.save(f"reward__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_1.npy", reward)
+            time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
             message = f"""
             Reward is out of range: 
             reward: {reward}, 

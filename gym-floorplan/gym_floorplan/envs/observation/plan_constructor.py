@@ -13,13 +13,18 @@ import copy
 import itertools
 import numpy as np
 import pandas as pd
+from collections import deque
 
 import torch
 
+# from torch_geometric.data import Data
+
 from gym_floorplan.envs.observation.geometry import Outline, Plan
 from gym_floorplan.envs.observation.wall_generator import WallGenerator
+
 from gym_floorplan.envs.observation.sequential_painter import SequentialPainter
 from gym_floorplan.envs.observation.room_extractor import RoomExtractor
+
 from gym_floorplan.envs.adjustable_configs_handeler import AdjustableConfigsHandeler
 
 
@@ -244,6 +249,13 @@ class PlanConstructor:
         for owall_name , owall_coord in walls_coords_outline.items():
             plan_data_dict = self.update_plan_with_active_wall(plan_data_dict=plan_data_dict, walls_coords=self.fenv_config['outline_walls_coords'], active_wall_name=owall_name)
             plan_data_dict = self.painter.update_obs_mat(plan_data_dict, owall_name)
+
+        # if self.fenv_config['env_planning'] == 'Dynamic':
+        #     plan_data_dict = self._get_initial_walls_for_multi_agent(plan_data_dict)
+            # initial_active_walls_order = sorted(list(plan_data_dict['inwalls_coords'].keys()))
+            # for inwall_name in initial_active_walls_order:
+            #     plan_data_dict = self.update_plan_with_active_wall(plan_data_dict=plan_data_dict, walls_coords=plan_data_dict['inwalls_coords'], active_wall_name=inwall_name)
+            #     plan_data_dict = self.painter.update_obs_mat(plan_data_dict, inwall_name)
             
         # if plan_data_dict['entrance_coords']:
         #     plan_data_dict = self._add_entrance_to_plan(plan_data_dict)
@@ -266,6 +278,29 @@ class PlanConstructor:
         return plan_data_dict
     
     
+
+    def _get_initial_walls_for_multi_agent(self, plan_data_dict):
+        # generate initial walls for multi agent env
+        fec = copy.deepcopy(self.fenv_config)
+        fec['n_walls'] = 1
+        inwalls_coords = {}
+        for i in range(plan_data_dict['n_walls']):
+            # self._update_non_occupied_coords(plan_data_dict)
+            valid_points_for_sampling = self._get_valid_points_for_sampling(plan_data_dict)
+            inwall_coords = WallGenerator(fenv_config=fec).make_walls(valid_points_for_sampling)
+            inwall_name = f"wall_{self.fenv_config['min_room_id']+i}"
+            inwall_coords[inwall_name] = inwall_coords[f"wall_{self.fenv_config['min_room_id']}"]
+            inwalls_coords.update(inwall_coords)
+            plan_data_dict.update({'inwalls_coords': inwalls_coords})
+            plan_data_dict = self.update_plan_with_active_wall(plan_data_dict=plan_data_dict, walls_coords=plan_data_dict['inwalls_coords'], active_wall_name=inwall_name)
+            plan_data_dict = self.painter.update_obs_mat(plan_data_dict, inwall_name)
+            plan_data_dict = self.rextractor.update_room_dict(plan_data_dict, inwall_name)
+            plan_data_dict = self._update_block_cells(plan_data_dict)
+            plan_data_dict['wall_order'].update({i+1: inwall_name})
+            
+        return plan_data_dict
+    
+
     
     def _update_block_cells(self, plan_data_dict):
         obs_blocked_cells_by_shift_0 = plan_data_dict['obs_moving_labels'].astype(np.int16) - plan_data_dict['obs_mat_w'].astype(np.int16) + plan_data_dict['only_boarder'].astype(np.int16)
@@ -289,6 +324,62 @@ class PlanConstructor:
         return plan_data_dict
     
     
+    def get_wall_repulsion_cells(self, plan_data_dict, active_wall_name):
+        obs_mat_without_this_wall = copy.deepcopy(plan_data_dict['walls_coords'][active_wall_name]['obs_mat_without_this_wall'])
+        obs_mat_base_w = copy.deepcopy(plan_data_dict['obs_mat_base_w'])
+        
+        mat_0 = copy.deepcopy(obs_mat_without_this_wall)
+        negative_matrix = copy.deepcopy(obs_mat_base_w)
+        active_wall_i = int(active_wall_name.split('_')[1])
+        mask = negative_matrix == -active_wall_i
+        negative_matrix[mask] = 0
+        
+        mat = copy.deepcopy(mat_0)
+        
+        mat += self._shift_left(mat_0)
+        mat += self._shift_right(mat_0)
+        mat += self._shift_down(mat_0)
+        mat += self._shift_up(mat_0)
+        
+        mat += self._shift_left(self._shift_up(mat_0))
+        mat += self._shift_right(self._shift_up(mat_0))
+        mat += self._shift_left(self._shift_down(mat_0))
+        mat += self._shift_right(self._shift_down(mat_0))
+        
+        mat = np.clip(mat, 0, 1)
+        
+        
+        
+        negative_mask = negative_matrix < 0
+        adjusted_negative_matrix = negative_matrix.copy()
+        # adjusted_negative_matrix[negative_mask] -= 1
+        
+        combined_matrix = mat * 10
+        non_zero_mask = adjusted_negative_matrix != 0
+        combined_matrix[non_zero_mask] = adjusted_negative_matrix[non_zero_mask]
+        
+        return combined_matrix
+        
+    
+    
+    def get_wall_repulsion_cells_test(self, plan_data_dict_backup):
+        import copy
+        mat_0 = copy.deepcopy(plan_data_dict_backup['walls_coords'][active_wall_name]['obs_mat_without_this_wall'])
+        
+        mat = copy.deepcopy(mat_0)
+        
+        mat += _shift_left(mat_0)
+        mat += _shift_right(mat_0)
+        mat += _shift_down(mat_0)
+        mat += _shift_up(mat_0)
+        
+        mat += _shift_left(_shift_up(mat_0))
+        mat += _shift_right(_shift_up(mat_0))
+        mat += _shift_left(_shift_down(mat_0))
+        mat += _shift_right(_shift_down(mat_0))
+        
+        mat = np.clip(mat, 0, 1)
+        
     
     @staticmethod
     def _shift_left(arr):
@@ -311,6 +402,31 @@ class PlanConstructor:
     def _shift_up(arr):
         return  np.append(arr[1:, :], (arr[0, :]*0).reshape((1,-1)), axis=0)
         
+    
+    
+    def get_wall_repulsion_cells_test_v2(self, obs_mat_without_this_wall):
+        # Initialize repulsion matrix with the original matrix
+        original_matrix = copy.deepcopy(obs_mat_without_this_wall)
+        repulsion_matrix = copy.deepcopy(original_matrix)
+        
+        # Get the dimensions of the matrix
+        rows, cols = original_matrix.shape
+        
+        # Iterate through each cell in the original matrix
+        for i in range(rows):
+            for j in range(cols):
+                if original_matrix[i, j] != 0:
+                    # Mark repulsion in immediate neighborhood
+                    for di in [-1, 0, 1]:
+                        for dj in [-1, 0, 1]:
+                            if di == 0 and dj == 0:
+                                continue  # Skip the cell itself
+                            ni, nj = i + di, j + dj
+                            if 0 <= ni < rows and 0 <= nj < cols:
+                                repulsion_matrix[ni, nj] = 1
+        
+        return repulsion_matrix
+    
     
     
     def _project_facades_on_masked_room_walls(self, plan_data_dict):
@@ -432,7 +548,7 @@ class PlanConstructor:
         for fwall_name, fwall_coord in walls_coords_false.items():
             fwall_coords = WallGenerator(self.fenv_config).make_walls(valid_points_for_sampling, fwall_coord, wall_name=fwall_name)
             walls_coords_false[fwall_name] = fwall_coords[fwall_name]
-        
+
         plan_data_dict.update({
                                'walls_coords_false': walls_coords_false,
                                'rectangles_vertex': rectangles_vertex,
@@ -451,18 +567,36 @@ class PlanConstructor:
             for k, v in plan_dict['walls_segments_dict'].items():
                 if active_wall_name in k:
                     print(k)
-            print('wait in _setup_plan of observation')
+            print('wait in update_plan_with_active_wall of observation')
             raise ValueError("some thing is wrong with updating plan_data_dict")
             
         return plan_data_dict
 
     
 
-    def _get_valid_points_for_sampling(self, plan_data_dict):
+    def _get_valid_points_for_sampling_v0(self, plan_data_dict):
         valid_points_for_sampling = np.argwhere(plan_data_dict['obs_moving_ones']==0)
         valid_points_for_sampling = [[r, c] for r, c in valid_points_for_sampling if (r%2==0 and c%2==0 and r!=0 and c!=0 and r!=self.fenv_config['max_x'] and c!=self.fenv_config['max_y'])]
-       
         return np.array(valid_points_for_sampling)
+    
+    
+    def _get_valid_points_for_sampling(self, plan_data_dict):
+        matrix = copy.deepcopy(plan_data_dict['obs_moving_ones'])
+        matrix = np.array(matrix)
+        max_r, max_c = matrix.shape[0] - 1, matrix.shape[1] - 1
+        zero_positions = np.argwhere(matrix == 0)
+        filtered_zero_positions = [
+            (row, col) for row, col in zero_positions 
+            if row % 2 == 0 and col % 2 == 0  # Even indices
+            and row != 0 and col != 0  # Exclude first row and column
+            and row != max_r and col != max_c  # Exclude last row and column
+        ]
+        marked_matrix = matrix.copy()
+        for row, col in filtered_zero_positions:
+            marked_matrix[row, col] = -1
+        valid_points_for_sampling_ = np.argwhere(marked_matrix==-1)
+        # print(np.array_equal(valid_points_for_sampling, valid_points_for_sampling_)) 
+        return np.array(valid_points_for_sampling_)
     
     
     
@@ -474,12 +608,16 @@ class PlanConstructor:
     
     
     
-#%% This is only for testing and debugging
+#%%
 if __name__ == '__main__':
     from gym_floorplan.envs.fenv_config import LaserWallConfig
     fenv_config = LaserWallConfig().get_config()
+    
+    
     self = PlanConstructor(fenv_config)
+    
     for _ in range(1):
+        
         plan_data_dict = self.get_plan_data_dict()
         print(plan_data_dict['mask_numbers'])
     

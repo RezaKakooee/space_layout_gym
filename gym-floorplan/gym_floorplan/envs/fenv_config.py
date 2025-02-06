@@ -10,6 +10,7 @@ Created on Wed Jun 30 00:58:16 2021
 import os
 def get_housing_design_root_dir():
     housing_design_root_dir = os.getenv('HOUSING_DESIGN_ROOT_DIR')
+    housing_design_root_dir = os.path.expandvars(str(housing_design_root_dir))
     if housing_design_root_dir is None:
         raise EnvironmentError("The 'HOUSING_DESIGN_ROOT_DIR' environment variable is not set.")
     return housing_design_root_dir
@@ -27,6 +28,26 @@ from gym_floorplan.envs.name_spaces import net_archs, color_map
 class LaserWallConfig:
     def __init__(self, phase='train', hyper_params={}):
         self.phase = phase
+        ## agent 
+        self.agent_name = 'PPO'
+        self.load_agent_from_pre_train_flag = False
+        ## obs
+        self.cnn_observation_name = 'canvas_1d' 
+        self.cnn_scaling_factor = 1
+        ## res
+        self.rewarding_method_name = 'ZC_Smooth_Log_Reward'
+        self.zc_reward_weighening_mode = '02_01_02_01_94'
+        self.shift_zc_reward_bottom_to_zero = 1
+        ## plan
+        self.plan_config_source_name = 'fixed_test_config'
+        self.n_rooms = 4
+        ## model
+        self.action_masking_flag = False
+        self.model_last_name = 'TinyCnnEncoder'
+        ## scenario
+        self.learn_room_order_directly = True
+        self.lv_mode = True
+        
         
         #######################################################################
         ### Hyper params ######################################################
@@ -38,16 +59,40 @@ class LaserWallConfig:
         for dhpattribute in default_hyper_params.keys():
             setattr(self, dhpattribute, default_hyper_params[dhpattribute])
 
-        self.resolution = 'Low'
         self.n_channels = 1 if self.cnn_observation_name in ['canvas_1d', 'rooms_cmap'] else 3
         self.use_redidual = False
+        
+
+        #######################################################################
+        ### Lest collect a few parameters from testing in a dwfictionary #######
+        self.resolution = 'High'
+        self.load_from_inwalls_coords_fixed_for_debug = False
+        
+        self.load_pdd_flag = False
+        self.pdd_name = 'pdd1' if self.load_pdd_flag else 'pdd0'
+        # self.load_initial_actions_from_corresponding_plan_id = False
+        
+        self.dyp_is_multi_dim_observation = False
+        if self.dyp_is_multi_dim_observation: self.n_channels = 9
+        
+        self.moving_laser_mode = 'on_light' # off_light:0 , on_light:1, flashing_light
+        self.wall_identity_mode = 'identity_less' # identity_less identity_full
+        
+        self.wall_shape = 'straight_and_angled' # 'only_angled' 'straight_and_angled' 'only_straight'
+        
+        self.show_base_wall_in_expose = False if self.wall_identity_mode == 'identity_less' else True # this can be also false for identity_full
+        self.is_internal_walls_gray = True
+        #######################################################################
+
+        self.only_draw_room_gravity_points_flag = False
+        
         
         #######################################################################
         ### Env info ##########################################################
         #######################################################################
         self.env_name = 'SpaceLayoutGym-v0' 
-        self.env_type = 'Single'
-        self.env_planning = 'One_Shot'
+        self.env_type = 'Single' # 'Single'
+        self.env_planning = 'Dynamic' # Dynamic One_Shot
         self.env_space = self.action_space_type = 'Discrete'
         self.mask_flag = True
         self.net_archs = net_archs
@@ -55,7 +100,6 @@ class LaserWallConfig:
         #######################################################################
         ### Constraints info ##################################################
         #######################################################################
-        self.stop_ep_time_step = 1000
         self.is_area_a_constraint = True
         self.is_proportion_a_constraint = True
         self.is_entrance_a_constraint = True # Ensures no walls hits the entrance cells. This always has to be True even for zero constraint mode
@@ -92,8 +136,6 @@ class LaserWallConfig:
             self.adaptive_window = False
             self.does_living_room_need_a_facade = True
         
-        self.stop_ep_time_step = self.stop_ep_time_step if self.resolution == 'Low' else self.stop_ep_time_step * 2
-        self.stop_ep_time_step = int(self.stop_ep_time_step/2) if self.zero_constraint_flag else self.stop_ep_time_step
         self.gnn_obs_method = 'embedded_image_graph' # image   embedded_image_graph dummy_vector
         
         ### Define plan info ##################################################
@@ -112,7 +154,7 @@ class LaserWallConfig:
             }
             self.plan_id_for_load_fixed_config = None #  None or plan_id plans_[4]
             self.nrows_of_env_data_csv = None # None or an integer
-            self.fixed_num_rooms_for_loading = 4 # None or an integer
+            self.fixed_num_rooms_for_loading = 9 # None or an integer
         
         ### Room-wall cardinality info ########################################
         self.room_set_cardinality = 'Fixed' if self.plan_config_source_name == 'fixed_test_config' else 'X'
@@ -155,7 +197,7 @@ class LaserWallConfig:
             self.scenario_name += '__' + ''.join(s[0].upper() for s in self.rewarding_method_name.split('_')) + '__'
             if self.resolution == 'High': self.scenario_name += "Hr__"
             self.scenario_name += f"{self.agent_name}"
-    
+
         #######################################################################
         ### Hyper params ######################################################
         #######################################################################
@@ -166,7 +208,7 @@ class LaserWallConfig:
         self.distance_field_flag = False
         ## for lv_mode
         self.weight_for_missing_entrance_lvroom_connection = 1
-        self.lvroom_portion_range = [0.3, 0.6]
+        self.lvroom_portion_range = [0.2, 0.4]
         self.lvroom_id = 11
         self.load_good_action_sequence_for_on_policy_pre_training = False
         self.load_good_action_sequence_prob = 0.0
@@ -182,15 +224,17 @@ class LaserWallConfig:
             self.meta_observation_type = 'list'
             self.meta_observation_type_for_saving = 'list'
         ## for storing the env info
-        self.save_env_info_on_callback = False
+        self.save_env_info_on_callback = False if self.env_planning == 'Dynamic' else False
         self.only_save_high_quality_env_data = False
+        self.env_info_flag = False
 
         #######################################################################
         ### Reqward info ######################################################
         #######################################################################
-        self.positive_final_reward = 1000 # self.stop_ep_time_step
-        self.positive_done_reward = 100 # 0.1*self.stop_ep_time_step
-        self.negative_badly_stop_reward = -200 # -0.2 * self.stop_ep_time_step
+        # self.dynamic_planning_rejected_reward = -1
+        self.positive_final_reward = 1000 
+        self.positive_done_reward = 100 
+        self.negative_badly_stop_reward = -200 
         
         self.last_good_reward_scalar = 1 # I hope this could help to prioritize adjacency over episode_len
         self.last_good_reward_threshold = 500
@@ -239,6 +283,7 @@ class LaserWallConfig:
             self.zc_terminal_state_wp_std = 0.01
             self.zc_terminal_state_we_mean = 0.94
             
+            
         ## Constraints and Objective
         # Geometrical
         self.area_tolerance = 10 if self.resolution == 'Low' else 20
@@ -259,7 +304,7 @@ class LaserWallConfig:
             self.aspect_ratios_tolerance = 6
             self.area_tolerance_for_zero_constraint = 15
             self.aspect_ratios_tolerance_for_zero_constraint = 6
-
+            
         ### fnorm Reqward #####################################################
         self.reward_concavity_factor = 8
         self.fnorm_area_factor = 10
@@ -274,7 +319,7 @@ class LaserWallConfig:
         self.fnorm_reward_concavity_factor = 8
 
         self.fnorm_non_accepted_negative_reward = -0.01 ## (-0.01 works better) #### ### No geom tolerance and vertical scalar 1000 PPO_SpaceLayoutGym_3a8a1_00000: -0.01 #### No geom tolerance PPO_SpaceLayoutGym_d76ad_00000: -0.1, PPO_SpaceLayoutGym_6018d_00000: -0.001 # ### FNorm with geom tolerance PPO_SpaceLayoutGym_21c39_00000: -1 # PPO_SpaceLayoutGym_0024e_00000: -0.5 # PPO_SpaceLayoutGym_e3619_00000: -0.4 # PPO_SpaceLayoutGym_bf16d_00000: -0.1 # PPO_SpaceLayoutGym_4eb60_00000:-0.01 
-        self.fnorm_negative_badly_stop_reward = -self.stop_ep_time_step
+        self.fnorm_negative_badly_stop_reward = -1000
 
         self.fnorm_intra_episode_wa = 0.7
         self.fnorm_intra_episode_wp = 0.3
@@ -287,8 +332,8 @@ class LaserWallConfig:
         self.fnorm_terminal_state_wl = 0.001
 
         ## fnorm and
-        self.area_inf = 10
-        self.area_sup = 220 if self.resolution == 'Low' else 440
+        self.area_inf = 0
+        self.area_sup = 220 if self.resolution == 'Low' else 1010#440
         self.area_delta_inf = 0
         self.area_delta_sup = self.area_sup - self.area_inf
         self.aspect_ratio_inf = 1
@@ -314,7 +359,7 @@ class LaserWallConfig:
         self.delta_aspect_ratios_tolerance_for_fnorm = 5
 
         ### General Reqward info ##############################################
-        self.min_acceptable_area = 10 if (self.plan_config_source_name == 'fixed_test_config' and self.n_rooms == 7) else 12
+        self.min_acceptable_area = (10 if (self.plan_config_source_name == 'fixed_test_config' and self.n_rooms == 7) else 12) if self.resolution == 'Low' else 100
         self.max_acceptable_area = 150 if self.resolution == 'Low' else 320 # TODO: 420 has to be adjusted probably
         self.min_acceptable_aspect_ratio = 1
         self.max_acceptable_aspect_ratio = 10 if self.resolution == 'Low' else 20
@@ -357,13 +402,90 @@ class LaserWallConfig:
         # if self.resolution == 'High':
         #     raise ValueError("edge_diff_max needs to be adjusted for high resolution with high number of rooms")
         
+        
+        
+        ######################################################################
+        ### Dynamic planning #################################################
+        self.dyp_area_tolerance = 100
+        self.dyp_aspect_ratios_tolerance = 10
+        self.dyp_edge_tolerance = 5
+        self.dyp_x_start = 0
+        self.dyp_x_end_area = self.dyp_area_tolerance
+        self.dyp_x_end_aspect_ratio = self.dyp_aspect_ratios_tolerance
+        self.dyp_x_end_edge = self.dyp_edge_tolerance
+        self.dyp_y_start = 0
+        self.dyp_y_end = 0.001
+        self.dyp_shift_to_negative_y_end = True
+        self.dyp_rejected_reward = -0.1
+        self.dyp_negative_badly_stop_reward = -1
+        self.dyp_bonus_reward = 100
+        self.dyp_reward_positive_constant_terminal = 10
+        self.dyp_lvroom_entrance_topo_condition_violation_negative_reward = self.dyp_rejected_reward / 1
+        self.dyp_geom_violation_negative_reward = self.dyp_rejected_reward / 1
+        self.dyp_topo_violation_negative_reward = self.dyp_rejected_reward / 1
+        self.dyp_simple_negative_reward = self.dyp_rejected_reward / 2
+        self.dyp_activate_simple_reward = True
+        self.dyp_check_geom_violation = True
+        self.dyp_check_lvroom_entrance_topo_violation = True
+        self.dyp_check_topo_violation = True
+        self.dyp_well_finished_condition_relaxation_factor_for_area = 1
+        self.dyp_well_finished_condition_relaxation_factor_for_aspect_ratio = 1
+        self.dyp_well_finished_condition_relaxation_factor_for_edge = 0
+        self.dyp_well_finished_condition = {
+            'delta_area_threshold': 50 * self.dyp_well_finished_condition_relaxation_factor_for_area,
+            'delta_aspect_ratio_threshold': 6 * self.dyp_well_finished_condition_relaxation_factor_for_aspect_ratio,
+            'delta_edge_threshold': 1 * self.dyp_well_finished_condition_relaxation_factor_for_edge,
+        }
+        self.wf_factor_name = 'wf_factor_' + (str(self.dyp_well_finished_condition_relaxation_factor_for_area) + 
+                                              str(self.dyp_well_finished_condition_relaxation_factor_for_aspect_ratio) + 
+                                              str(self.dyp_well_finished_condition_relaxation_factor_for_edge))
+        
+        self.dyp_simple_min_max_reward_falg = False
+        self.dyp_min_achieved_area_to_accept = 64
+        self.dyp_max_achieved_area_to_accept = 256
+        self.dyp_max_achieved_aspect_ratio_to_accept = 4
+        self.dyp_geom_condition_features = [
+            'min_achieved_area', 
+            # 'max_achieved_area',
+            # 'max_achieved_aspect_ratio', 
+            'delta_area_mean', 
+            'delta_area_std',
+            'delta_aspect_ratio_mean', 
+            'delta_aspect_ratio_std'
+        ]
+        self.dyp_well_finished_condition_features = [
+            'delta_area_mean',
+            'delta_aspect_ratio_mean',
+            'delta_edge_list',
+        ]
+
+        #######################################################################
+        ### Stop time step ####################################################
+        if self.env_planning == 'Dynamic':
+            self.stop_ep_time_step = 1000
+
+        elif self.env_planning == 'One_Shot':
+            if self.plan_config_source_name == 'create_random_config':
+                self.stop_ep_time_step = 2000
+            elif self.resolution == 'High':
+                self.stop_ep_time_step = 2000
+            else:
+                self.stop_ep_time_step = 1000
+            
+            if self.zero_constraint_flag:
+                self.stop_ep_time_step = int(self.stop_ep_time_step/2)
+
+        else:
+            raise ValueError("env_planning should be either 'Dynamic' or 'One_Shot'")
+            
+            
         #######################################################################
         ### Plan components ###################################################
         #######################################################################
         self.maximum_num_masked_rooms = 4
         self.num_of_facades = 4
         self.num_entrance = 1
-        self.maximum_num_real_rooms = 9 if self.resolution == 'Low' else 20
+        self.maximum_num_real_rooms = 9 if self.resolution == 'Low' else 9
         self.maximum_num_real_plus_masked_rooms = self.maximum_num_masked_rooms + self.maximum_num_real_rooms
         self.num_plan_components = self.maximum_num_real_plus_masked_rooms + self.num_of_facades + self.num_entrance
         
@@ -555,6 +677,8 @@ class LaserWallConfig:
         if self.resolution == 'High':
             self.max_x = 44
             self.max_y = 44
+            self.max_x_background = 44
+            self.max_y_background = 44
 
         self.non_squared_plan_flag = False if (self.max_x == self.max_x_background and self.max_y == self.max_y_background) else True
             
@@ -570,7 +694,7 @@ class LaserWallConfig:
             }}
         
         self.scaling_factor = 1
-        self.seg_length = 2
+        self.seg_length = 1
         
         ## coords info
         self.num_corners = 4
@@ -623,31 +747,27 @@ class LaserWallConfig:
         #######################################################################
         ### Actions ########################################################
         #######################################################################
-        self.action_dict = {
-            0: 'move_up',
-            1: 'move_right',
-            2: 'move_down',
-            3: 'move_left',
-            4: 'move_up_right',
-            5: 'move_down_right',
-            6: 'move_down_left',
-            7: 'move_up_left',
-            8: 'rotate_cw',
-            9: 'rotate_ccw',
-            10: 'rotate_cw_front_seg',
-            11: 'rotate_ccw_front_seg',
-            12: 'rotate_cw_back_seg',
-            13: 'rotate_ccw_back_seg',
-            14: 'no_action',
-            15: 'flip_x',
-            16: 'flip_y',
-            17: 'grow_front_seg',
-            18: 'cut_front_seg',
-            19: 'grow_back_seg',
-            20: 'cut_back_seg',
-        }
-
-        if self.env_planning == 'One_Shot':
+        if self.wall_shape == 'only_straight':
+            self.wall_lib = [
+                [[-1, 0], [ 0, 0], [ 1, 0]], # 4 # __
+                [[ 0,-1], [ 0, 0], [ 0, 1]], # 5 # |
+                ]
+            
+            self.wall_type = {
+                0: 'horizental', 1: 'vertical'
+            }
+        elif self.wall_shape == 'only_angled':
+            self.wall_lib = [
+                [[ 1, 0], [ 0, 0], [ 0, 1]], # 0 # |__ 
+                [[ 0, 1], [ 0, 0], [-1, 0]], # 1 # __|
+                [[-1, 0], [ 0, 0], [ 0,-1]], # 2 # --|
+                [[ 0,-1], [ 0, 0], [ 1, 0]], # 3 # |--
+                ]
+            
+            self.wall_type = {
+                0: 'angeled', 1: 'angeled', 2: 'angeled', 3: 'angeled',
+            }
+        elif self.wall_shape == 'straight_and_angled':
             self.wall_lib = [
                 [[ 1, 0], [ 0, 0], [ 0, 1]], # 0 # |__ 
                 [[ 0, 1], [ 0, 0], [-1, 0]], # 1 # __|
@@ -657,10 +777,18 @@ class LaserWallConfig:
                 [[-1, 0], [ 0, 0], [ 1, 0]], # 4 # __
                 [[ 0,-1], [ 0, 0], [ 0, 1]], # 5 # |
                 ]
-            self.wall_lib_length = len(self.wall_lib)
-            self.wall_type = {0: 'angeled', 1: 'angeled', 2: 'angeled', 3: 'angeled',
-                              4: 'horizental', 5: 'vertical'}
             
+            self.wall_type = {
+                0: 'angeled', 1: 'angeled', 2: 'angeled', 3: 'angeled',
+                4: 'horizental', 5: 'vertical'
+            }
+        else:
+            raise ValueError(f"Invalid wall_shape: {self.wall_shape}")
+        
+        self.wall_lib_length = len(self.wall_lib)
+        
+        if self.env_planning == 'One_Shot':
+
             self.room_size_category = {0: 'large', 
                                        1: 'medium',
                                        2: 'small'}
@@ -671,7 +799,8 @@ class LaserWallConfig:
                 self.zero_index_action_size = len(self.room_size_category)
             elif self.learn_room_order_directly:
                 if self.plan_config_source_name == 'fixed_test_config':
-                    self.zero_index_action_size = self.n_rooms # n_rooms maximum_num_real_rooms
+                    # when fixed_test_config is used, the number of rooms is int, so we get int(self.n_rooms) for clarity
+                    self.zero_index_action_size = int(self.n_rooms) # n_rooms maximum_num_real_rooms
                 else:
                     self.zero_index_action_size = self.maximum_num_real_rooms 
                 
@@ -691,16 +820,57 @@ class LaserWallConfig:
             #                 a += 1
             
             self.n_actions = self.zero_index_action_size * len(self.wall_lib) * ((self.max_x-1)//2) * ((self.max_y-1)//2) # len(self.action_to_acts_tuple_dic) 
-            
+        else:
+            if self.plan_config_source_name == 'fixed_test_config':
+                # when fixed_test_config is used, the number of rooms is int, so we get int(self.n_rooms) for clarity
+                self.zero_index_action_size = int(self.n_rooms) - 1 # this is -1 because we do not design lvroom
+            else:
+                self.zero_index_action_size = self.maximum_num_real_rooms - 1 # this is -1 because we do not design lvroom
+
+            ###### Transformations ######
+            self.action_dict = {
+                0: 'move_up',
+                1: 'move_right',
+                2: 'move_down',
+                3: 'move_left',
+                4: 'move_up_right',
+                5: 'move_down_right',
+                6: 'move_down_left',
+                7: 'move_up_left',
+                8: 'rotate_cw',
+                9: 'rotate_ccw',
+            }
+
+            if self.wall_shape == 'straight_and_angled':
+                self.action_dict.update({
+                10: 'rotate_cw_front_seg',
+                11: 'rotate_ccw_front_seg',
+                12: 'rotate_cw_back_seg',
+                13: 'rotate_ccw_back_seg',
+            })
+                
+                # 14: 'no_action',
+                # 15: 'flip_x',
+                # 16: 'flip_y',
+                # 17: 'grow_front_seg',
+                # 18: 'cut_front_seg',
+                # 19: 'grow_back_seg',
+                # 20: 'cut_back_seg',
+
+            self.n_wall_transformations = len(self.action_dict)
+            self.offonlight_size = 2 if self.moving_laser_mode == 'flashing_light' else 1
+            self.n_actions = self.n_wall_transformations * self.zero_index_action_size * self.offonlight_size
+                
         ### Transformations
-        self.translation_mat_dict = {'move_up': [0, 1],
-                                     'move_right': [1, 0],
-                                     'move_down': [0, -1],
-                                     'move_left': [-1, 0],
-                                     'move_up_right': [1, 1],
-                                     'move_down_right': [1, -1],
-                                     'move_down_left': [-1, -1],
-                                     'move_up_left': [-1, 1]}
+        self.transformation_step_size = 2
+        self.translation_mat_dict = {'move_up': [0, self.transformation_step_size],
+                                     'move_right': [self.transformation_step_size, 0],
+                                     'move_down': [0, -self.transformation_step_size],
+                                     'move_left': [-self.transformation_step_size, 0],
+                                     'move_up_right': [self.transformation_step_size, self.transformation_step_size],
+                                     'move_down_right': [self.transformation_step_size, -self.transformation_step_size],
+                                     'move_down_left': [-self.transformation_step_size, -self.transformation_step_size],
+                                     'move_up_left': [-self.transformation_step_size, self.transformation_step_size]}
 
         self.flip_mat_dict = {'flip_x': [-1, 1],
                               'flip_y': [1, -1]}
@@ -747,7 +917,7 @@ class LaserWallConfig:
         #######################################################################
         self.show_render_flag = False
         self.so_thick_flag = False
-        self.show_graph_on_plan_flag = False
+        self.show_graph_on_plan_flag = True
         self.graph_line_style = 'bezier' # bezier hanging stright
         self.show_room_dots_flag = False
         self.save_render_flag = False
@@ -773,8 +943,8 @@ class LaserWallConfig:
             os.makedirs(self.ana_agents_storage_dir)
             
         ## dataset path
-        self.rnd_scenario_name = 'Scn__2024_02_02_2222__CRC__XRr__EnZSQR__RND__Stable'
-        self.ana_scenario_name = 'Scn__2024_02_20_2020__MetaCnnNet__ZC_Smooth_Log_Reward__all_plans__ANA__Stable' ##'Scn__2024_01_19_1444__MetaCnnNet__ZC_Smooth_Log_Reward__all_plans__ANA__Stable' 
+        self.rnd_scenario_name = 'Scn__2024_02_02_2222__CRC__XRr__EnZSQR__RND__Stable' # 'Scn__2024_02_02_2222__CRC__XRr__EnZSQR__RND__Stable'
+        self.ana_scenario_name = 'Scn__2024_02_02_2222__CRC__XRr__EnZSQR__RND__Stable' ##'Scn__2024_01_19_1444__MetaCnnNet__ZC_Smooth_Log_Reward__all_plans__ANA__Stable' 
         
         ## from random agent
         if 'create' in self.plan_config_source_name:
@@ -783,8 +953,8 @@ class LaserWallConfig:
             if 'bc' in self.phase:
                 phase = self.phase.split('_')[1]
                 
-            plan_name = "plans_test.csv" if self.agent_name == 'PPO' else f"plans_valid.csv" 
-            self.plan_path = os.path.join(self.rnd_agents_storage_dir, self.rnd_scenario_name, f"plans_test.csv")
+            # plan_name = "plans_test.csv" if self.agent_name == 'PPO' else f"plans_valid.csv" 
+            self.plan_path = os.path.join(self.rnd_agents_storage_dir, self.rnd_scenario_name, "plans_valid.csv")
             self.plan_path_cc = os.path.join(self.rnd_agents_storage_dir, self.rnd_scenario_name, 'plans_cc.csv')
 
             # self.plan_path = os.path.join(self.rnd_agents_storage_dir, 'plans_4-9.csv')
@@ -832,7 +1002,7 @@ class LaserWallConfig:
 
 
 
-#%% This is only for testing and debugging
+# %%
 if __name__ == '__main__':
     self = LaserWallConfig()
     fenv_config = self.get_config()

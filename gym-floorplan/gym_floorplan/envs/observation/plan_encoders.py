@@ -455,10 +455,10 @@ class TinyCnnEncoder_dose_not_work_use_average_pooling(nn.Module):
             assert y.shape == torch.Size([256, 1]), "output shape has to be 256*1"
 
     def forward(self, obs_cnn):
-        if obs_cnn.shape[3] in [1, 3]: 
+        if obs_cnn.shape[3] in [1, 3, 9]: 
             obs_cnn = obs_cnn.permute(0, 3, 1, 2)
         else:
-            assert obs_cnn.shape[1] in [1, 3], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
+            assert obs_cnn.shape[1] in [1, 3, 9], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
 
         if obs_cnn.dtype != 'float':
             obs_cnn = obs_cnn.float()
@@ -497,10 +497,10 @@ class TinyCnnEncoder(nn.Module):
         
 
     def forward(self, obs_cnn):
-        if obs_cnn.shape[3] in [1, 3]: 
+        if obs_cnn.shape[3] in [1, 3, 9]: 
             obs_cnn = obs_cnn.permute(0, 3, 1, 2)
         else:
-            assert obs_cnn.shape[1] in [1, 3], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
+            assert obs_cnn.shape[1] in [1, 3, 9], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
 
         if obs_cnn.dtype != 'float':
             obs_cnn = obs_cnn.float()
@@ -573,7 +573,7 @@ class MiniResidualCnnEncoder(nn.Module):
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
-        if x.shape[-1] == 46:
+        if x.shape[-1] == 45:
             out = self.layer4(out)
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
@@ -594,7 +594,7 @@ class MiniResidualCnnEncoder(nn.Module):
         x = self.layer3(x)
         print("Post layer3:", x.min().item(), x.max().item())
 
-        if x.shape[-1] == 46:
+        if x.shape[-1] == 45:
             x = self.layer4(x)
             print("Post layer4:", x.min().item(), x.max().item())
 
@@ -666,6 +666,38 @@ class ContextAndFeatureEncoder(nn.Module):
 ###############################################################################
 ### EncoderNet ################################################################
 ###############################################################################
+class CnnEncoder(nn.Module):
+    def __init__(self, cfg):
+        super(MetaCnnEncoder, self).__init__()
+        
+        self.cfg = cfg
+        
+        self.context_encoder = ContextEncoder(self.cfg)
+        
+        if self.cfg['image_encoder_type'] == 'TinyCnnEncoder':
+            self.feature_encoder = TinyCnnEncoder(self.cfg)
+        elif self.cfg['image_encoder_type'] == 'MiniResidualCnnEncoder':
+            self.feature_encoder = MiniResidualCnnEncoder(self.cfg)
+        elif self.cfg['image_encoder_type'] == 'ResNetXCnnEncoder':
+            self.feature_encoder = ResNetXCnnEncoder(self.cfg)
+        else:
+            raise ValueError(f"Unsupported image_encoder_type: {self.cfg['image_encoder_type']}")
+        
+    
+
+    def forward(self, real_obs):
+        obs_cnn = real_obs['observation_cnn']
+
+        if obs_cnn.shape[3] in [1, 3, 9]: 
+            obs_cnn = obs_cnn.permute(0, 3, 1, 2)
+        else:
+            assert obs_cnn.shape[1] in [1, 3, 9], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
+
+        out = self.feature_encoder(obs_cnn)
+
+        return out
+    
+    
 
 class MetaCnnEncoder(nn.Module):
     def __init__(self, cfg):
@@ -692,10 +724,10 @@ class MetaCnnEncoder(nn.Module):
         obs_cnn = real_obs['observation_cnn']
         obs_meta = real_obs['observation_meta']
 
-        if obs_cnn.shape[3] in [1, 3]: 
+        if obs_cnn.shape[3] in [1, 3, 9]: 
             obs_cnn = obs_cnn.permute(0, 3, 1, 2)
         else:
-            assert obs_cnn.shape[1] in [1, 3], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
+            assert obs_cnn.shape[1] in [1, 3, 9], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
 
         cotext_emb = self.context_encoder(obs_meta)   
         feature_emd = self.feature_encoder(obs_cnn)
@@ -751,3 +783,26 @@ class MetaCnnNetPreTrainedEncoder(nn.Module):
     def forward(self, real_obs):
         return self.encoder(real_obs)
         
+    
+    
+# p = '/home/rdbt/ETHZ/dbt_python/housing_design/storage_nobackup/rlb_agents_storage/tunner/Prj__2024_04_10_1800__rlb__bc2ppo__2nd_paper/Scn__2024_04_10_1805__PTM__ZSLR__BC/model/modelsd.pt'   
+
+# class MiniResidualCnnEncoder(nn.Module):
+#     def __init__(self, cfg):
+#         super(MiniResidualCnnEncoder, self).__init__()
+        
+#         self.cfg = cfg
+#         self.image_net = ResNetXCnnEncoder(self.cfg) if self.cfg['image_encoder_type'] == 'ResNetXCnnEncoder' else MiniResidualCnnEncoder(self.cfg)
+            
+
+#     def forward(self, real_obs):
+#         obs_cnn = real_obs
+
+#         if obs_cnn.shape[3] in [1, 3, 9]: 
+#             obs_cnn = obs_cnn.permute(0, 3, 1, 2)
+#         else:
+#             assert obs_cnn.shape[1] in [1, 3, 9], 'The second dimension of the observation_cnn should be 1 or 3 when feeding to the CNN encoder.'
+
+#         image_emd = self.image_net(obs_cnn)
+
+#         return image_emd

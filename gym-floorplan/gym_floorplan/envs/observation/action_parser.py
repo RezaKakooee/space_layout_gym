@@ -12,6 +12,7 @@ import os
 import copy
 import inspect
 import numpy as np
+from datetime import datetime
 
 from gym_floorplan.envs.observation.wall_generator import WallGenerator
 from gym_floorplan.envs.observation.wall_transform import WallTransform
@@ -49,7 +50,103 @@ class ActionMapper:
         j = (j_part + 1) * 2
         k = (k_part + 1) * 2
         return (c, i, j, k)
+
+
+class DynamicAgentActionParser_v0:
+    def __init__(self, fenv_config):
+        self.fenv_config = fenv_config
+        self.zero_index_action_size = self.fenv_config['zero_index_action_size']
+        self.n_wall_transformations = self.fenv_config['n_wall_transformations']
+        self.min_room_id = self.fenv_config['min_room_id']
+
+        self.n_actions = self.fenv_config['n_actions']
+
+    def action_to_id(self, room_i, transform_i):
+        """Converts an action tuple to a unique identifier."""
+        room_i -= 1 # -1 because we do not desing lvroom directly
+        a = room_i * self.zero_index_action_size + transform_i
+        return a
     
+    def id_to_action(self, a):
+        """Converts a unique identifier back to an action tuple."""
+        room_i = a // self.n_wall_transformations
+        room_i += (self.min_room_id + 1) # +1 because we do not desing lvroom directly. note here min room_i is 0
+        transform_i = a % self.zero_index_action_size # -1 because we do not desing lvroom directly
+        return (room_i, transform_i)
+    
+    
+    
+class DynamicAgentActionParserv1:
+    def __init__(self, fenv_config):
+        self.fenv_config = fenv_config
+        self.wall_start = fenv_config['min_room_id'] + 1 # 12
+        self.wall_end = self.wall_start + fenv_config['zero_index_action_size'] -1 #  8  # 12 to 19 (8 walls in total)
+        self.transform_size = fenv_config['n_wall_transformations']
+        self.offonlight_size = fenv_config['offonlight_size']
+        self.n_actions = (self.wall_end - self.wall_start + 1) * self.transform_size * self.offonlight_size
+        assert self.n_actions == self.fenv_config['n_actions']
+
+    def action_to_id(self, wall_i, transform_i, offonlight_i):
+        """Converts an action tuple to a unique identifier."""
+        if not (self.wall_start <= wall_i <= 19 and 0 <= transform_i <= (self.transform_size-1) and 0 <= offonlight_i <= (self.offonlight_size-1)):
+            raise ValueError("Invalid action values")
+        
+        adjusted_wall_i = wall_i - self.wall_start
+        return (adjusted_wall_i * self.transform_size * self.offonlight_size +
+                transform_i * self.offonlight_size +
+                offonlight_i)
+
+    def id_to_action(self, action_id):
+        """Converts a unique identifier back to an action tuple."""
+        if not 0 <= action_id < self.n_actions:
+            raise ValueError("Invalid action ID")
+
+        offonlight_i = action_id % self.offonlight_size
+        transform_i = (action_id // self.offonlight_size) % self.transform_size
+        wall_i = (action_id // (self.transform_size * self.offonlight_size)) + self.wall_start
+        return (wall_i, transform_i, offonlight_i)
+
+    def get_action_space_size(self):
+        """Returns the total number of possible actions."""
+        return self.n_actions
+    
+    
+    
+class DynamicAgentActionParser:
+    def __init__(self, fenv_config):
+        self.fenv_config = fenv_config
+        self.zero_index_action_size = fenv_config['zero_index_action_size']
+        self.n_wall_transformations = fenv_config['n_wall_transformations']
+        self.offonlight_size = fenv_config['offonlight_size']
+        self.n_actions = self.offonlight_size * self.zero_index_action_size * self.n_wall_transformations
+        assert self.n_actions == self.fenv_config['n_actions']
+
+    def action_to_id(self, wall_i, transform_i, offonlight_i):
+        """Converts an action tuple to a unique identifier."""
+        if not (0 <= wall_i < self.zero_index_action_size and 
+                0 <= transform_i < self.n_wall_transformations and 
+                0 <= offonlight_i < self.offonlight_size):
+            raise ValueError("Invalid action values")
+        
+        return (wall_i * self.n_wall_transformations * self.offonlight_size +
+                transform_i * self.offonlight_size +
+                offonlight_i)
+
+    def id_to_action(self, action_id):
+        """Converts a unique identifier back to an action tuple."""
+        if not 0 <= action_id < self.n_actions:
+            raise ValueError("Invalid action ID")
+        
+        offonlight_i = action_id % self.offonlight_size
+        transform_i = (action_id // self.offonlight_size) % self.n_wall_transformations
+        wall_i = action_id // (self.n_wall_transformations * self.offonlight_size)
+        
+        return (wall_i, transform_i, offonlight_i)
+
+    def get_action_space_size(self):
+        """Returns the total number of possible actions."""
+        return self.n_actions
+   
     
     
 class ActionParser:
@@ -59,6 +156,11 @@ class ActionParser:
                                           fenv_config['wall_lib_length'], 
                                           fenv_config['max_x'], 
                                           fenv_config['max_y'])
+        
+        self.selected_actions = []
+        self.selected_wall_i = []
+        self.selected_transformation_i = []
+        self.selected_offonlight = []
     
     
     
@@ -76,19 +178,56 @@ class ActionParser:
                         a += 1
         
         if sum(action_mask) == 0:
-            np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_1.npy", self.plan_data_dict)
+            time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
             action_mask_status = False
             # raise RuntimeError("no action left to be selected!")
             
         return action_mask#, action_mask_status
     
+
+
+    def decode_action_for_dynamic_agent(self, plan_data_dict, action):
+        decoded_action_dict = {'action': action,
+                               'action_status': None,
+                               'active_room_i': None,
+                               'active_room_name': None,
+                               'active_wall_i': None,
+                               'active_wall_name': None,
+                               'active_w_coords': None,
+                               'wall_type': None,
+                               'active_wall_transformation_i': None}
+        
+        # a = list(action.values())[0]
+        r_i, t_i, l_i = DynamicAgentActionParser(fenv_config=self.fenv_config).id_to_action(action)
+        r_i += 12
+        if r_i in range(self.fenv_config['lvroom_id']+1, self.fenv_config['lvroom_id']+plan_data_dict['n_rooms']): # 1st +1 to ignore lvroom, 2nd +1 to include last room i
+            decoded_action_dict['action_status'] = 'check' # TODO: we have to investigate if such an wall exist. agent migh select wall_19, but we might only have untill wall_16 
+            decoded_action_dict['active_room_i'] = r_i
+            decoded_action_dict['active_room_name'] = f"room_{r_i}"
+            decoded_action_dict['active_wall_i'] = decoded_action_dict['active_room_i']
+            decoded_action_dict['active_wall_name'] = f"wall_{decoded_action_dict['active_room_i']}"
+            decoded_action_dict['active_w_coords'] = None
+            decoded_action_dict['wall_type'] = None
+            decoded_action_dict['active_wall_transformation_i'] = t_i
+            decoded_action_dict['active_wall_light_status_i'] = l_i 
+        
+        self.selected_actions.append(action)
+        self.selected_wall_i.append(r_i)
+        self.selected_transformation_i.append(t_i)
+        self.selected_offonlight.append(l_i)
+        
+        # print(f"Action: {action:3d}, Room: {r_i:2d}, Transformation: {t_i:2d}, Light: {l_i:2d}, Action Status: {decoded_action_dict['action_status']}")
+        
+        return decoded_action_dict
+
     
     
     def decode_action_from_direct_order_learning(self, plan_data_dict, action):
         decoded_action_dict = {'action': action,
                                'action_status': None,
                                'active_room_i': None,
-                               'active_room_area': None,
+                               'active_room_name': None,
                                'active_wall_i': None,
                                'active_wall_name': None,
                                'active_w_coords': None,
@@ -101,7 +240,8 @@ class ActionParser:
             r_i, w_i, x, y = self.action_mapper.id_to_action(action)
             # print(r_i, w_i, x, y)
         except:
-            np.save(f"plan_data_dict__{__file__}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_0.npy", plan_data_dict)
+            time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
             raise ValueError(f"There is something wrong with the action of {action}. plan_id is: {plan_data_dict['plan_id']}")
         
         largest_room_count = plan_data_dict['n_rooms']
@@ -116,7 +256,7 @@ class ActionParser:
                 decoded_action_dict['action_status'] = 'check'
                 
                 decoded_action_dict['active_room_i'] = r_i
-                decoded_action_dict['active_room_area'] = room_name
+                decoded_action_dict['active_room_name'] = room_name
                 
                 decoded_action_dict['active_wall_i'] = decoded_action_dict['active_room_i']
                 decoded_action_dict['active_wall_name'] = f"wall_{decoded_action_dict['active_room_i']}"
@@ -142,7 +282,7 @@ class ActionParser:
                                'action_status': None,
                                'room_size_cat_name': None,
                                'active_room_i': None,
-                               'active_room_area': None,
+                               'active_room_name': None,
                                'active_wall_i': None,
                                'active_wall_name': None,
                                'active_w_coords': None,
@@ -155,7 +295,8 @@ class ActionParser:
             c_i, w_i, x, y = self.action_mapper.id_to_action(action)
             # print(c_i, w_i, x, y)
         except:
-            np.save(f"plan_data_dict__{__file__}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_1.npy", self.plan_data_dict)
+            time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
             raise ValueError(f"There is something wrong with the action of {action}. plan_id is: {plan_data_dict['plan_id']}")
         
         room_size_cat_name = self.fenv_config['room_size_category'][c_i]
@@ -165,7 +306,7 @@ class ActionParser:
             decoded_action_dict['action_status'] = 'check'
             
             decoded_action_dict['active_room_i'] = plan_data_dict['room_i_per_size_category'][room_size_cat_name][0]
-            decoded_action_dict['active_room_area'] = plan_data_dict['room_area_per_size_category'][room_size_cat_name][0]
+            decoded_action_dict['active_room_name'] = plan_data_dict['room_area_per_size_category'][room_size_cat_name][0]
             
             decoded_action_dict['active_wall_i'] = decoded_action_dict['active_room_i']
             decoded_action_dict['active_wall_name'] = f"wall_{decoded_action_dict['active_room_i']}"
@@ -196,7 +337,8 @@ class ActionParser:
                         'anchor_coord': w_coords[1],
                         'front_open_coord': w_coords[2]}
         except: 
-            np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_1.npy", self.plan_data_dict)
+            time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
             raise ValueError(f"The w_coords is wrogn: {w_coords}. plan_id is: plan_data_dict['plan_id']")
             
         back_position = self._cartesian2image_coord(new_wall['back_open_coord'][0], 
@@ -237,8 +379,8 @@ class ActionParser:
                 active_wall_status = "check_room_area"
         
         if active_wall_status == "check_room_area":
-            # valid_points_for_sampling = self._get_valid_points_for_sampling(plan_data_dict)
-            new_wall_coords = WallGenerator(self.fenv_config).make_walls(plan_data_dict, 
+            valid_points_for_sampling = self._get_valid_points_for_sampling(plan_data_dict)
+            new_wall_coords = WallGenerator(self.fenv_config).make_walls(valid_points_for_sampling, 
                                                                          new_wall, 
                                                                          wall_name=new_wall_name)
             new_walls_coords.update(new_wall_coords)

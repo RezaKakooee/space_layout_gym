@@ -21,6 +21,9 @@ import matplotlib
 from matplotlib import cm
 # matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.patches as patches
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 # from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 import matplotlib.patheffects as path_effects
@@ -28,7 +31,6 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 from scipy import ndimage as ndi
 import matplotlib as mpl
-from skimage import color
 from skimage.exposure import histogram
 from skimage.filters import sobel
 from skimage.segmentation import watershed
@@ -45,9 +47,11 @@ from gym_floorplan.envs.render.colors_lib import get_color_dict
 
 #%%
 class RenderPlan:
-    def __init__(self, fenv_config=None):
+    def __init__(self, fenv_config={}):
         self.fenv_config = copy.deepcopy(fenv_config)
         # self.fenv_config['phase'] = 'test'
+        self.fenv_config['trial'] = 0 if 'trial' not in self.fenv_config.keys() else self.fenv_config['trial'] # type: ignore
+
         
         self._initialize_variables()
 
@@ -57,36 +61,27 @@ class RenderPlan:
         self.plan_data_dict = plan_data_dict
         self.episode = episode
         self.ep_time_step = ep_time_step + 1
-
         
         self.fig, self.ax = plt.subplots(figsize=self.figsize, dpi=self.dpi, frameon=False)
         self.fig.tight_layout()
-        self.fig.patch.set_visible(False)
+        self.fig.patch.set_visible(False) # type: ignore
         
-        # self._draw_outlines()
-    
         self._draw_inlines()
     
-        # self._draw_masked_rooms()
-     
-        # self._draw_outlines()
-        
-        # self._draw_wall_segments()
-    # 
         if self.fenv_config['show_room_dots_flag']:
             self._draw_dots()
     
         if ( self.fenv_config['show_graph_on_plan_flag'] and 
-             len(plan_data_dict['wall_types']) == plan_data_dict['n_walls']):
+              len(plan_data_dict['wall_types']) == plan_data_dict['n_walls'] ):
             self.__get_all_gravity_coords()
-            if not self.fenv_config['only_draw_room_gravity_points_flag']: self.__draw_room_edges()
-            # self.__draw_facade_edges()
-            if not self.fenv_config['only_draw_room_gravity_points_flag']: self.__draw_entrance_edges()
+            if not self.fenv_config['only_draw_room_gravity_points_flag']: 
+                self.__draw_room_edges()
+            if not self.fenv_config['only_draw_room_gravity_points_flag']: 
+                self.__draw_entrance_edges()
             self.__draw_room_gravity_points()
         else:
-            self.fenv_config['phase'] == 'debug'
+            self.fenv_config['phase'] = 'debug'
             self.__get_all_gravity_coords()
-            # self.__draw_room_gravity_points()
         
     
         # ax.set_axis_off()
@@ -103,10 +98,7 @@ class RenderPlan:
         canvas = FigureCanvasAgg(self.fig)
         canvas.draw()
         buf = canvas.buffer_rgba()
-        # ... convert to a NumPy array ...
         X = np.asarray(buf)
-        # ... and pass it to PIL.
-        
         im = Image.fromarray(X)
         
         # obs_mat = self._edit_obs_mat(X[:,:,0])
@@ -124,8 +116,6 @@ class RenderPlan:
             plan_fig_path = self._save_the_plan(self.fig)
             return plan_fig_path
         
-        # return im
-
 
     def _initialize_variables(self):
         self.wall_colors, self.room_colors = get_color_dict(self.fenv_config)
@@ -144,16 +134,6 @@ class RenderPlan:
                 self.dots_markersize = 15
                 self.linestyle_of_graph = 'dashed'
                 self.red_green_blue_color_map = {'red': 'tomato', 'green': 'limegreen', 'blue': 'dodgerblue'}
-                
-                
-                # self.wall_linewidth = 10
-                # self.basewall_linewidth = 10
-                # self.outline_linewidth = 10
-                # self.masked_walls_linewidth = 11
-                # self.linewidth_of_graph = 1
-                # self.room_centroid_marker_size = 5
-                # self.patch_lw = 10
-                # self.dots_markersize = 15
                 
                 
             elif self.fenv_config['resolution'] == 'High':
@@ -203,38 +183,9 @@ class RenderPlan:
         else:
             self.dpi = 300
             self.figsize = (10,10)
-            # plt.ioff()
             
             
             
-    def _draw_outlines(self):
-        if self.fenv_config['so_thick_flag']:
-            for conrol_points in self.outline_control_points:
-                self.ax.plot(conrol_points[0], conrol_points[1], 
-                        color=self.wall_colors['outline_color'], 
-                        linewidth=self.basewall_linewidth)
-        else:
-            for key, segment in self.plan_data_dict['wall_outline_segments'].items():
-                x = [segment['start_coord'][0] , segment['end_coord'][0]]
-                y = [segment['start_coord'][1] , segment['end_coord'][1]]
-                self.ax.plot(x,y, 
-                        color=self.wall_colors[key],#wall_colors[key], 
-                        linewidth=self.basewall_linewidth)
-                
-    
-            
-    def _draw_masked_rooms(self):
-        if self.fenv_config['mask_flag']:
-            for i in range(self.plan_data_dict['mask_numbers']):
-                self.ax.add_patch(Rectangle(
-                             self.plan_data_dict['rectangles_vertex'][i],
-                             self.plan_data_dict['mask_lengths'][i], 
-                             self.plan_data_dict['mask_widths'][i],
-                             fc='white', ec='none', 
-                             lw=self.patch_lw))
-            
-            
-      
     def _draw_inlines(self):
         for key, seg_data in self.plan_data_dict['wall_inline_segments'].items():
             x = [seg_data['start_coord'][0], seg_data['end_coord'][0]]
@@ -252,8 +203,12 @@ class RenderPlan:
                 linewidth=self.basewall_linewidth,
                 ) 
             
-    
+        show_only_base_wall = False
         for key, seg_data in self.plan_data_dict['wall_inline_segments'].items():
+            if show_only_base_wall:
+                wall_id = int(key.split('_')[1])
+                if wall_id > self.fenv_config['entrance_cell_id']:
+                    continue
             x = [seg_data['start_coord'][0], seg_data['reflection_coord'][0]]
             y = [seg_data['start_coord'][1], seg_data['reflection_coord'][1]]
             
@@ -321,59 +276,7 @@ class RenderPlan:
                             markersize=self.dots_markersize,
                             ) 
         
-        
     
-    def __get_so_sick_coords(self, seg_data, delta_l, i):
-        if self.plan_data_dict['masked_corners'][i] == 'corner_00':
-            corner_xy = [self.fenv_config['min_x'], self.fenv_config['min_y']]
-            corner_xy = [corner_xy[0]-1, corner_xy[1]-1]
-            for k, sd in seg_data.items():
-                if sd['direction'] == 'south':
-                    x1 = [corner_xy[0] , sd['reflection_coord'][0]-delta_l]
-                    y1 = [corner_xy[1] , sd['reflection_coord'][1] - 1]
-                elif sd['direction'] == 'west':
-                    x2 = [corner_xy[0] , sd['reflection_coord'][0]-1]
-                    y2 = [corner_xy[1] , sd['reflection_coord'][1]-delta_l]
-                    
-        elif self.plan_data_dict['masked_corners'][i] == 'corner_01':
-            corner_xy = [self.fenv_config['min_x'], self.fenv_config['max_y']]
-            corner_xy = [corner_xy[0]-1, corner_xy[1]+1]
-            for k, sd in seg_data.items():
-                if sd['direction'] == 'north':
-                    x1 = [corner_xy[0] , sd['reflection_coord'][0]-delta_l]
-                    y1 = [corner_xy[1] , sd['reflection_coord'][1] + 1]
-                elif sd['direction'] == 'west':
-                    x2 = [corner_xy[0] , sd['reflection_coord'][0] - 1]
-                    y2 = [corner_xy[1] , sd['reflection_coord'][1]+delta_l]
-            
-        elif self.plan_data_dict['masked_corners'][i] == 'corner_10':
-            corner_xy = [self.fenv_config['max_x'], self.fenv_config['min_y']]
-            corner_xy = [corner_xy[0]+1, corner_xy[1]-1]
-            for k, sd in seg_data.items():
-                if sd['direction'] == 'south':
-                    x1 = [corner_xy[0] , sd['reflection_coord'][0]+delta_l]
-                    y1 = [corner_xy[1] , sd['reflection_coord'][1] - 1]
-                elif sd['direction'] == 'east':
-                    x2 = [corner_xy[0] , sd['reflection_coord'][0] + 1]
-                    y2 = [corner_xy[1] , sd['reflection_coord'][1]-delta_l]
-            
-        elif self.plan_data_dict['masked_corners'][i] == 'corner_11':
-            corner_xy = [self.fenv_config['max_x'], self.fenv_config['max_y']]
-            corner_xy = [corner_xy[0]+1, corner_xy[1]+1]
-            for k, sd in seg_data.items():
-                if sd['direction'] == 'north':
-                    x1 = [corner_xy[0] , sd['reflection_coord'][0]+delta_l]
-                    y1 = [corner_xy[1] , sd['reflection_coord'][1] + 1]
-                elif sd['direction'] == 'east':
-                    x2 = [corner_xy[0] , sd['reflection_coord'][0] + 1]
-                    y2 = [corner_xy[1]+1 , sd['reflection_coord'][1]+delta_l]
-                    
-        else:
-            raise ValueError(f"Wrong corner to display: {self.plan_data_dict['masked_corners'][i]}")
-            
-        return x1, y1, x2, y2
-        
-        
     
     def __get_light_coords(self, seg_data, delta_l, i):
         if self.plan_data_dict['masked_corners'][i] == 'corner_00':
@@ -422,6 +325,19 @@ class RenderPlan:
         return x1, y1, x2, y2
     
     
+    
+    def __get_all_gravity_coords(self):
+        if self.fenv_config['wall_identity_mode']:
+            self.rooms_gravity_coord_dict = self.find_room_centers_median_for_dyp_identity_less_wall(self.plan_data_dict['obs_moving_labels'])
+        else:
+            self.rooms_gravity_coord_dict = self._get_rooms_gravity_coord(self.fenv_config, self.plan_data_dict)
+        self.rooms_gravity_coord_dict.update(self.fenv_config['facade_coords'])
+        
+        x = (self.plan_data_dict['entrance_coords'][0][0] + self.plan_data_dict['entrance_coords'][1][0]) / 2.0
+        y = (self.plan_data_dict['entrance_coords'][0][1] + self.plan_data_dict['entrance_coords'][1][1]) / 2.0
+        self.rooms_gravity_coord_dict.update({'room_d': [x, y]})# self.plan_data_dict['entrance_coords'][0]})
+        
+
 
     def __get_gravity(self, room_coords):
         room_coords = np.array(room_coords)
@@ -458,6 +374,41 @@ class RenderPlan:
                     rooms_gravity_coord_dict[room_name] = gravity_coord
                     
         return rooms_gravity_coord_dict
+    
+    
+    
+    def find_room_centers_median_for_dyp_identity_less_wall(self, matrix):
+        arr = np.array(matrix)
+        room_numbers = np.unique(arr[arr > 0])
+        centers = {}
+        
+        for room in room_numbers:
+            room_mask = arr == room
+            room_indices = np.where(room_mask)
+            
+            median_y = np.median(room_indices[0])
+            median_x = np.median(room_indices[1])
+            
+            while not room_mask[int(median_y), int(median_x)]:
+                in_room_y, in_room_x = room_indices[0][0], room_indices[1][0]
+                median_y += np.sign(in_room_y - median_y)
+                median_x += np.sign(in_room_x - median_x)
+            
+            centers[room] = (int(median_y), int(median_x))
+        
+        processed_centers = {}
+        for room_i, (r, c) in centers.items():
+            if room_i != self.fenv_config['entrance_cell_id']:
+                x, y = self.__gravity_image_coords2cartesians(r, c, self.fenv_config['max_y'])
+                x_jittered, y_jittered = self.add_jitter(x, y)
+                processed_centers[f'room_{room_i}'] = [x_jittered, y_jittered]
+        return processed_centers
+    
+
+
+    @staticmethod
+    def add_jitter(x, y, amount=0.5):
+        return x + np.random.rand()/4, y + np.random.rand()/4
     
 
 
@@ -641,7 +592,8 @@ class RenderPlan:
                                                 path_effects.Normal()]
                                   )
                     except:
-                        np.save(f"plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_1.npy", self.plan_data_dict)
+                        time = datetime.now().strftime("%Y%m%d_%H%M%S") # type: ignore
+                        np.save(f"{self.fenv_config['root_dir']}/storage_nobackup/plan_data_dict_storage/plan_data_dict__{os.path.basename(__file__)}_{self.__class__.__name__}_{inspect.currentframe().f_code.co_name}_{time}.npy", self.plan_data_dict)
                         raise ValueError("In render_plan.py edge seems to have node 0. plan_id is: {self.plan_data_dict['plan_id']}")
                         
                         
@@ -684,15 +636,6 @@ class RenderPlan:
                           )
                         
                         
-    def __get_all_gravity_coords(self):
-        self.rooms_gravity_coord_dict = self._get_rooms_gravity_coord(self.fenv_config, self.plan_data_dict)
-        self.rooms_gravity_coord_dict.update(self.fenv_config['facade_coords'])
-        
-        x = (self.plan_data_dict['entrance_coords'][0][0] + self.plan_data_dict['entrance_coords'][1][0]) / 2.0
-        y = (self.plan_data_dict['entrance_coords'][0][1] + self.plan_data_dict['entrance_coords'][1][1]) / 2.0
-        self.rooms_gravity_coord_dict.update({'room_d': [x, y]})# self.plan_data_dict['entrance_coords'][0]})
-        
-    
                     
     def __crop_center(self, img, cropx, cropy):
         y,x = img.shape
@@ -722,9 +665,8 @@ class RenderPlan:
         
         plan_fig_path = os.path.join(results_dir, f"pid_{plan_id}__{name}__tr_{self.trial}__ep_{self.episode:02}__ts_{self.ep_time_step:02}.png")
         # fig.savefig(plan_fig_path, bbox_extra_artists=(lgd,), bbox_inches='tight')
-        fig.savefig(plan_fig_path, bbox_inches='tight')
+        fig.savefig(plan_fig_path, bbox_inches='tight') #, transparent=True, pad_inches=0, format='png')
         return plan_fig_path
-        
         
         
 
@@ -805,8 +747,289 @@ class DisplayPlan:
             'w': [self.fenv_config['min_x'], self.fenv_config['max_y']//2],            
                   }
         
+        self.color_dict = {
+            2: '#FFFFFF',  # White
+            3: '#FFFFFF',  # White
+            4: '#FFFFFF',  # White
+            5: '#FFFFFF',  # White
+            
+            6: '#000000',  # Black
+            7: '#000000',  # Black
+            8: '#000000',  # Black
+            9: '#000000',  # Black
+            
+            10: '#D3D3D3',  # Light Gray
+            
+            11: '#D3D3D3',  # Light Gray
+            
+            12:'#E57373',  # Light Maroon
+            13: '#20B2AA',  # Light Sea Green (Light Teal)
+            14: '#BAE1FF',  # Light Blue
+            15: '#E2BAFF',  # Light Purple '#FFFFBA',  # Light Yellow
+            16: '#FFDFBA',  # Light Peach
+            17: '#FF69B4',  # Hot Pink (reddish tone) # 
+            18: '#BAF2FF',  # Light Cyan
+            19: '#C4FF9E',  # Light Lime
+        }
+        
+        
+        if self.fenv_config['is_internal_walls_gray']:
+            self.internal_wall_colors = {
+                -11: '#333333',  # Dark Pink
+                
+                -12: '#333333',  # Dark Maroon
+                -13: '#333333',  # Dark Green
+                -14: '#333333',  # Dark Blue
+                -15: '#333333',  # Dark Purple '#FFD700',  # Dark Yellow
+                -16: '#333333',  # Dark Orange
+                -17: '#333333',  # Dark Magenta (corresponding to Hot Pink) # 
+                -18: '#333333',  # Dark Cyan
+                -19: '#333333',  # Dark Lime
+            }
+            
+        else:
+            self.internal_wall_colors = {
+                -11: '#FF69B4',  # Dark Pink
+                
+                -12: '#800000',  # Dark Maroon
+                -13: '#006400',  # Dark Green
+                -14: '#4169E1',  # Dark Blue
+                -15: '#8A2BE2',  # Dark Purple '#FFD700',  # Dark Yellow
+                -16: '#FF8C00',  # Dark Orange
+                -17: '#8B008B',  # Dark Magenta (corresponding to Hot Pink) # 
+                -18: '#008B8B',  # Dark Cyan
+                -19: '#32CD32',  # Dark Lime
+            }
+
+    def value_to_color(self, val):
+        return self.color_dict.get(val, '#FFFFFF')  # Default to white if value not in dict
+    
+    def dynamic_room_overlay(self, plan_data_dict, episode, ep_time_step):
+        left_array = copy.deepcopy(plan_data_dict['obs_moving_labels'])
+        right_array = copy.deepcopy(plan_data_dict['obs_mat_w'])
+
+        def add_entrance_to_plan(left_array, right_array):
+            for r, c in plan_data_dict['entrance_positions']:
+                left_array[r][c] = self.fenv_config['entrance_cell_id']
+                right_array[r][c] = self.fenv_config['entrance_cell_id']
+            return left_array, right_array
+        left_array, right_array = add_entrance_to_plan(left_array, right_array)
+
+        self.episode = episode
+        self.ep_time_step = ep_time_step + 1
+
+        # Add base walls if show_base_wall_in_expose is True
+        # show_base_wall_in_expose = False
+        if self.fenv_config['show_base_wall_in_expose']:
+            obs_mat_base_w = copy.deepcopy(plan_data_dict['obs_mat_base_w'])
+            for i in range(obs_mat_base_w.shape[0]):
+                for j in range(obs_mat_base_w.shape[1]):
+                    if obs_mat_base_w[i, j] < 0:
+                        right_array[i, j] = -20  # Use a special value to represent base walls
+
+        # Create the base image from the right array (to include base walls)
+        img = np.array([[self.value_to_color(val) for val in row] for row in right_array])
+
+        # Convert color strings to RGBA
+        img_rgba = np.array([mcolors.to_rgba(color) for color in img.flatten()]).reshape(img.shape + (4,))
+
+        fig, ax = plt.subplots(figsize=(20, 10))
+
+        # Color internal walls and outline
+        unique_right_values = np.unique(right_array)
+        available_walls = [val for val in unique_right_values if -19 <= val <= -12]
+        for i in range(right_array.shape[0]):
+            for j in range(right_array.shape[1]):
+                if right_array[i, j] < 0:
+                    if -19 <= right_array[i, j] <= -12:
+                        img_rgba[i, j] = mcolors.to_rgba(self.internal_wall_colors[right_array[i, j]]) # type: ignore
+                    elif right_array[i, j] == -20:
+                        img_rgba[i, j] = mcolors.to_rgba('#333333')  # Very dark gray for base walls # type: ignore
+                    else:
+                        img_rgba[i, j] = mcolors.to_rgba('black')  # Outline walls # type: ignore
+
+        # Add room colors
+        for i in range(left_array.shape[0]):
+            for j in range(left_array.shape[1]):
+                if left_array[i, j] >= 10:
+                    img_rgba[i, j] = mcolors.to_rgba(self.color_dict.get(left_array[i, j], '#FFFFFF')) # type: ignore
+
+        im = ax.imshow(img_rgba)
+        ax.axis('off')
+
+        # Add a color bar for rooms
+        unique_values = sorted(set(val for val in left_array.flatten() if val >= 10))
+        colors = [self.color_dict.get(val, '#FFFFFF') for val in unique_values]
+        color_map = mcolors.ListedColormap(colors)
+        norm = mcolors.BoundaryNorm(unique_values + [max(unique_values) + 1], color_map.N)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=color_map),
+                            cax=cax, orientation='vertical')
+        cbar.set_ticks(np.array(unique_values) + 0.5)
+        cbar.set_ticklabels(unique_values)
+        cbar.set_label('Room IDs')
+
+        # Add a color bar for walls on the left
+        if not self.fenv_config['is_internal_walls_gray']:
+            wall_colors = [self.internal_wall_colors[val] for val in available_walls] + ['#000000']
+            wall_color_map = mcolors.ListedColormap(wall_colors)
+            wall_values = available_walls + [-11]
+            wall_norm = mcolors.BoundaryNorm(wall_values + [max(wall_values) + 1], wall_color_map.N)
+            cax_legend = divider.append_axes("left", size="5%", pad=0.05)
+            wall_cbar = plt.colorbar(plt.cm.ScalarMappable(norm=wall_norm, cmap=wall_color_map),
+                                     cax=cax_legend, orientation='vertical')
+            wall_cbar.set_ticks(np.array(wall_values) + 0.5)
+            wall_cbar.set_ticklabels([f"{-val}" if val != -1 else "10" for val in wall_values])
+            wall_cbar.set_label('Wall Types')
+    
+            # Adjust the position of tick labels to be centered within their corresponding color blocks
+            cax_legend.yaxis.set_ticks_position('left')
+            cax_legend.yaxis.set_label_position('left')
+            wall_cbar.ax.invert_yaxis()
+
+            # Manually set the ticks to ensure they are centered
+            ticks = (np.array(wall_values) + 0.5).tolist()
+            cax_legend.yaxis.set_major_locator(plt.FixedLocator(ticks))
+            cax_legend.set_yticklabels([f"{-val}" if val != -1 else "10" for val in wall_values], rotation=0, va='center')
+        
+        plt.tight_layout()
+
+        if self.fenv_config.get('save_render_flag', False):
+            self._save_the_plan(fig, title='combined-map')
+
+        plt.show()
+        
         
     
+    def dynamic_room_overlay_without_base_walls(self, plan_data_dict, episode, ep_time_step):
+        left_array = copy.deepcopy(plan_data_dict['obs_moving_labels'])
+        right_array = copy.deepcopy(plan_data_dict['obs_mat_w'])
+    
+        def add_entrance_to_plan(left_array, right_array):
+            for r, c in plan_data_dict['entrance_positions']:
+                left_array[r][c] = self.fenv_config['entrance_cell_id']
+                right_array[r][c] = self.fenv_config['entrance_cell_id']
+            return left_array, right_array
+        left_array, right_array = add_entrance_to_plan(left_array, right_array)
+    
+        self.episode = episode
+        self.ep_time_step = ep_time_step + 1
+    
+        # Create the base image from the left array
+        img = np.array([[self.value_to_color(val) for val in row] for row in left_array])
+    
+        # Convert color strings to RGBA
+        img_rgba = np.array([mcolors.to_rgba(color) for color in img.flatten()]).reshape(img.shape + (4,))
+    
+        fig, ax = plt.subplots(figsize=(20, 10))
+    
+        # Color internal walls and outline
+        unique_right_values = np.unique(right_array)
+        available_walls = [val for val in unique_right_values if -19 <= val <= -12]
+        for i in range(right_array.shape[0]):
+            for j in range(right_array.shape[1]):
+                if right_array[i, j] < 0:
+                    if -19 <= right_array[i, j] <= -12:
+                        img_rgba[i, j] = mcolors.to_rgba(self.internal_wall_colors[right_array[i, j]])
+                    else:
+                        img_rgba[i, j] = mcolors.to_rgba('black')  # Outline walls
+    
+        im = ax.imshow(img_rgba)
+        ax.axis('off')
+    
+        # Add a color bar for rooms
+        unique_values = sorted(set(val for val in left_array.flatten() if val >= 10))
+        colors = [self.color_dict.get(val, '#FFFFFF') for val in unique_values]
+        color_map = mcolors.ListedColormap(colors)
+        norm = mcolors.BoundaryNorm(unique_values + [max(unique_values) + 1], color_map.N)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=color_map),
+                            cax=cax, orientation='vertical')
+        cbar.set_ticks(np.array(unique_values) + 0.5)
+        cbar.set_ticklabels(unique_values)
+        cbar.set_label('Room IDs')
+    
+        # Add a color bar for walls on the left
+        wall_colors = [self.internal_wall_colors[val] for val in available_walls] + ['#000000']
+        wall_color_map = mcolors.ListedColormap(wall_colors)
+        wall_values = available_walls + [-11]
+        wall_norm = mcolors.BoundaryNorm(wall_values + [max(wall_values) + 1], wall_color_map.N)
+        cax_legend = divider.append_axes("left", size="5%", pad=0.05)
+        wall_cbar = plt.colorbar(plt.cm.ScalarMappable(norm=wall_norm, cmap=wall_color_map),
+                                 cax=cax_legend, orientation='vertical')
+        wall_cbar.set_ticks(np.array(wall_values) + 0.5)
+        wall_cbar.set_ticklabels([f"{-val}" if val != -1 else "10" for val in wall_values])
+        wall_cbar.set_label('Wall Types')
+    
+        # Adjust the position of tick labels to be centered within their corresponding color blocks
+        cax_legend.yaxis.set_ticks_position('left')  # Ensure ticks are on the left side
+        cax_legend.yaxis.set_label_position('left')  # Ensure label is on the left side
+        # Invert y-axis to center labels properly within color blocks
+        wall_cbar.ax.invert_yaxis()
+
+        # Manually set the ticks to ensure they are centered
+        ticks = (np.array(wall_values) + 0.5).tolist()
+        cax_legend.yaxis.set_major_locator(plt.FixedLocator(ticks))
+        cax_legend.set_yticklabels([f"{-val}" if val != -1 else "10" for val in wall_values], rotation=0, va='center')
+        
+        plt.tight_layout()
+    
+        if self.fenv_config.get('save_render_flag', False):
+            self._save_the_plan(fig, title='combined-map')
+    
+        plt.show()
+
+
+
+
+
+        
+    def show_matrix_with_values(self, plan_data_dict, episode, ep_time_step):
+        self.episode = episode
+        self.ep_time_step = ep_time_step + 1
+        
+        room_matrix = plan_data_dict['obs_moving_labels']
+        wall_matrix = plan_data_dict['obs_mat_w']
+        
+        fig, ax = plt.subplots(figsize=(15, 12))
+        
+        # Create a color-coded background for rooms
+        im_room = ax.imshow(room_matrix, cmap='coolwarm', alpha=0.7)
+        
+        # Add text annotations for rooms
+        for i in range(room_matrix.shape[0]):
+            for j in range(room_matrix.shape[1]):
+                if room_matrix[i, j] >= 10:  # Room numbers
+                    ax.text(j, i, int(room_matrix[i, j]), # type: ignore
+                            ha="center", va="center", color="w", fontweight='bold')
+        
+        # Add text annotations for walls
+        for i in range(wall_matrix.shape[0]):
+            for j in range(wall_matrix.shape[1]):
+                if wall_matrix[i, j] < 0:  # Wall numbers (negative values)
+                    ax.text(j, i, int(wall_matrix[i, j]), # type: ignore
+                            ha="center", va="center", color="r", fontweight='bold')
+        
+        ax.set_title(f'Room and Wall Visualization - Episode {episode}, Step {ep_time_step}')
+        
+        # Add colorbar for room values
+        cbar = plt.colorbar(im_room)
+        cbar.set_label('Room IDs')
+        
+        plt.tight_layout()
+        
+        if self.fenv_config.get('save_render_flag', False):
+            self._save_the_plan(fig, title='matrix_with_values')
+            
+        plt.show()
+        
+        
+    
+        
+        
+        
     def show_room_map(self, plan_data_dict, episode, ep_time_step):
         self.episode = episode
         self.ep_time_step = ep_time_step + 1

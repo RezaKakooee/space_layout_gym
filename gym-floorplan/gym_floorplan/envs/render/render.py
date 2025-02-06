@@ -56,6 +56,17 @@ class Render(BaseRender):
     
     def view(self, plan_data_dict, episode, ep_time_step):
         self.display_plan.view_obs_mat(plan_data_dict, episode, ep_time_step)
+        
+        
+        
+    def expose(self, plan_data_dict, episode, ep_time_step):
+        self.display_plan.dynamic_room_overlay(plan_data_dict, episode, ep_time_step)
+
+
+
+    def blueprint(self, plan_data_dict, episode, ep_time_step):
+        self.display_plan.show_matrix_with_values(plan_data_dict, episode, ep_time_step)
+
 
 
 
