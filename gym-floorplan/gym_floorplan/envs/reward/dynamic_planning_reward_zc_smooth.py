@@ -25,7 +25,10 @@ class DynamicPlanningRewardZcSmooth:
         self.collect_stats_flag = True
         self.stats_max_len = 10_000
         self.dyp_rew_stats = []
-        writable_dir = os.path.join(self.fenv_config['results_dir'], 'dyp_rew_stats')
+        if 'results_dir' in self.fenv_config.keys():
+            writable_dir = os.path.join(self.fenv_config['results_dir'], 'dyp_rew_stats') 
+        else:
+            writable_dir = os.path.join(self.fenv_config['rnd_agents_storage_dir'], f"{self.fenv_config['scenario_name']}/dyp_rew_stats")
         os.makedirs(writable_dir, exist_ok=True)
 
         self.dyp_simple_min_max_reward_falg = self.fenv_config.get('dyp_simple_min_max_reward_falg', False)
